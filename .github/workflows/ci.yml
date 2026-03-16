@@ -10,23 +10,17 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
+    container:
+      image: elixir:1.18.4-otp-28
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up Erlang and Elixir
-        uses: erlef/setup-beam@v1
-        with:
-          elixir-version: "1.18.4"
-          otp-version: "28.0"
-
       - name: Restore Mix cache
         uses: actions/cache@v5
         with:
           path: |
-            ~/.mix
-            ~/.hex
             deps
             _build
           key: ${{ runner.os }}-mix-${{ hashFiles('mix.lock') }}
