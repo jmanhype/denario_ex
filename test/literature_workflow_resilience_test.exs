@@ -2,7 +2,33 @@ defmodule DenarioEx.LiteratureWorkflowResilienceTest do
   use ExUnit.Case, async: true
 
   alias DenarioEx
-  alias DenarioExWorkflowsTest.FakeClient
+
+  defmodule FakeClient do
+    @behaviour DenarioEx.LLMClient
+
+    @impl true
+    def complete([%{role: "user", content: prompt}], _opts) do
+      if String.contains?(prompt, "[DENARIO_LITERATURE_SUMMARY]") do
+        {:ok, "\\begin{SUMMARY}Idea literature search unavailable\\end{SUMMARY}"}
+      else
+        {:error, {:unexpected_prompt, prompt}}
+      end
+    end
+
+    @impl true
+    def generate_object([%{role: "user", content: prompt}], _schema, _opts) do
+      if String.contains?(prompt, "[DENARIO_LITERATURE_DECISION]") do
+        {:ok,
+         %{
+           "reason" => "Search the literature before deciding novelty.",
+           "decision" => "query",
+           "query" => "synthetic anomaly score analysis"
+         }}
+      else
+        {:error, {:unexpected_object_prompt, prompt}}
+      end
+    end
+  end
 
   defmodule RateLimitedSemanticScholarClient do
     @behaviour DenarioEx.SemanticScholarClient
