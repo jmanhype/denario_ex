@@ -1,5 +1,8 @@
 # DenarioEx
 
+[![CI](https://github.com/jmanhype/denario_ex/actions/workflows/ci.yml/badge.svg)](https://github.com/jmanhype/denario_ex/actions/workflows/ci.yml)
+[![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
+
 Standalone Elixir port of the Denario workflow, extracted from
 `AstroPilot-AI/Denario`.
 
@@ -21,6 +24,18 @@ Implemented:
 mix deps.get
 mix test
 ```
+
+## Releases
+
+GitHub releases are created from version tags.
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The release workflow runs the test suite first and then publishes a GitHub release
+with generated notes.
 
 ## Temporary `req_llm` pin
 
@@ -98,3 +113,11 @@ alias DenarioEx
 {:ok, denario} = DenarioEx.check_idea(denario, llm: "openai:gpt-4.1-mini")
 {:ok, denario} = DenarioEx.get_paper(denario, llm: "openai:gpt-4.1-mini", compile: false)
 ```
+
+## Source lineage
+
+This repository started as an extraction from the Elixir port previously developed in:
+
+- <https://github.com/AstroPilot-AI/Denario>
+
+The active standalone codebase now lives here in `jmanhype/denario_ex`.
