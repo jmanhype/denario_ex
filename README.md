@@ -142,6 +142,7 @@ DenarioEx reads these environment variables:
 - Anthropic: `ANTHROPIC_API_KEY`
 - Perplexity: `PERPLEXITY_API_KEY`
 - Semantic Scholar: `SEMANTIC_SCHOLAR_KEY`, `SEMANTIC_SCHOLAR_API_KEY`, or `S2_API_KEY`
+- FutureHouse/Edison: `FUTURE_HOUSE_API_KEY`
 
 `check_idea/2` uses Semantic Scholar first and falls back to OpenAlex when no
 Semantic Scholar key is present or the public endpoint is rate-limited.
@@ -151,8 +152,8 @@ Semantic Scholar key is present or the public endpoint is rate-limited.
 GitHub releases are cut from tags:
 
 ```bash
-git tag v0.1.3
-git push origin v0.1.3
+git tag v0.1.4
+git push origin v0.1.4
 ```
 
 The release workflow runs the test suite and publishes a GitHub release with
