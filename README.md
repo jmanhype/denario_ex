@@ -9,6 +9,8 @@ paper generation.
 
 It is built around `ReqLLM` and `LLMDB`, keeps project artifacts on disk, and
 can run either as a real OpenAI-backed workflow or as a fully offline demo.
+It now also includes a separate Phoenix LiveView shell under `web/` for a
+browser-based control room on top of the same core library.
 
 ## What It Covers
 
@@ -48,6 +50,31 @@ For a real run:
 `research-pilot` is the one-call compatibility workflow. It loads the data
 description, runs idea generation, method generation, results, optional
 literature checking, and paper generation in sequence.
+
+## Web UI
+
+The repo now includes a Phoenix LiveView app in `web/` that sits on top of the
+core `denario_ex` library. It is intentionally a separate app, not a rewrite of
+the core.
+
+```bash
+cd web
+mix deps.get
+mix test
+mix phx.server
+```
+
+Then open [http://localhost:4000](http://localhost:4000).
+
+Current UI slice:
+
+- open or create a Denario project directory
+- edit persisted artifacts in place
+- launch workflow phases from the browser
+- review live activity/status
+- open generated plots, TeX, PDF, and referee logs
+
+Architecture notes live in [docs/architecture/liveview-ui.md](docs/architecture/liveview-ui.md).
 
 If you are not running inside an activated virtualenv, point the results
 executor at a known-good interpreter:
@@ -167,7 +194,8 @@ Short version:
 
 - core research workflow: effectively ported
 - compatibility surface: mostly ported, with a few Python-only branches still missing
-- Python Streamlit app: not ported
+- Phoenix LiveView control room: initial slice shipped in `web/`
+- Python Streamlit app: not ported literally
 
 ## Temporary `req_llm` Pin
 
