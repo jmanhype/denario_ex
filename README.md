@@ -23,6 +23,37 @@ can run either as a real OpenAI-backed workflow or as a fully offline demo.
 ```bash
 mix deps.get
 mix test
+mix escript.build
+```
+
+## CLI
+
+The standalone repo now ships with an escript entrypoint:
+
+```bash
+./denario_ex offline-demo --project-dir /tmp/denario_ex_demo
+```
+
+For a real run:
+
+```bash
+./denario_ex research-pilot \
+  --project-dir /tmp/denario_ex_full \
+  --data-description-file ./project_input.md \
+  --mode fast \
+  --llm openai:gpt-4.1-mini \
+  --literature
+```
+
+`research-pilot` is the one-call compatibility workflow. It loads the data
+description, runs idea generation, method generation, results, optional
+literature checking, and paper generation in sequence.
+
+If you are not running inside an activated virtualenv, point the results
+executor at a known-good interpreter:
+
+```bash
+DENARIO_EX_PYTHON=/path/to/venv/bin/python ./denario_ex research-pilot ...
 ```
 
 ## Offline Demo
@@ -48,6 +79,12 @@ To control the output directory:
 
 ```bash
 DENARIO_EX_DEMO_DIR=/tmp/denario_ex_demo mix run examples/offline_demo.exs
+```
+
+Or through the CLI:
+
+```bash
+./denario_ex offline-demo --project-dir /tmp/denario_ex_demo
 ```
 
 ## Real OpenAI Workflow
@@ -120,6 +157,16 @@ git push origin v0.1.2
 
 The release workflow runs the test suite and publishes a GitHub release with
 generated notes.
+
+## Parity Status
+
+The current parity audit lives in [PARITY.md](PARITY.md).
+
+Short version:
+
+- core research workflow: effectively ported
+- compatibility surface: mostly ported, with a few Python-only branches still missing
+- Python Streamlit app: not ported
 
 ## Temporary `req_llm` Pin
 

@@ -19,5 +19,8 @@ erl_crash.dump
 # Ignore package tarball (built via "mix hex.build").
 denario_ex-*.tar
 
+# Ignore the local escript build artifact.
+/denario_ex
+
 # Temporary files, for example, from tests.
 /tmp/

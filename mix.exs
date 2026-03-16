@@ -7,6 +7,7 @@ defmodule DenarioEx.MixProject do
       version: "0.1.2",
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
+      escript: [main_module: DenarioEx.CLI],
       description:
         "Standalone Elixir research workflow for idea, results, literature, and paper generation",
       deps: deps()

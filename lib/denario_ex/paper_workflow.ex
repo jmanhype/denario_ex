@@ -276,6 +276,14 @@ defmodule DenarioEx.PaperWorkflow do
          conclusions,
          add_citations
        ) do
+    title = sanitize_latex_body(title)
+    abstract = sanitize_latex_body(abstract)
+    keywords = sanitize_latex_body(keywords)
+    introduction = sanitize_latex_body(introduction)
+    methods = sanitize_latex_body(methods)
+    results = sanitize_latex_body(results)
+    conclusions = sanitize_latex_body(conclusions)
+
     bibliography_block =
       if add_citations do
         "\\bibliography{bibliography}\n#{preset.bibliography_style}"
@@ -510,5 +518,44 @@ defmodule DenarioEx.PaperWorkflow do
     |> String.replace("&", "\\&")
     |> String.replace("%", "\\%")
     |> String.replace("_", "\\_")
+  end
+
+  defp sanitize_latex_body(nil), do: ""
+
+  defp sanitize_latex_body(text) when is_binary(text) do
+    {protected_text, protected_blocks} = protect_latex_commands(text)
+
+    protected_text
+    |> escape_unescaped_specials()
+    |> restore_latex_commands(protected_blocks)
+  end
+
+  defp protect_latex_commands(text) do
+    pattern =
+      ~r/\\(?:ref|label|cite|citep|citet|bibliography|url|href)\{[^}]*\}|\\includegraphics(?:\[[^\]]*\])?\{[^}]*\}/
+
+    pattern
+    |> Regex.scan(text)
+    |> Enum.map(&List.first/1)
+    |> Enum.uniq()
+    |> Enum.with_index()
+    |> Enum.reduce({text, %{}}, fn {match, index}, {acc_text, acc_blocks} ->
+      token = "LATEXBLOCKTOKEN#{index}ENDTOKEN"
+      {String.replace(acc_text, match, token), Map.put(acc_blocks, token, match)}
+    end)
+  end
+
+  defp restore_latex_commands(text, protected_blocks) when is_binary(text) do
+    Enum.reduce(protected_blocks, text, fn {token, original}, acc ->
+      String.replace(acc, token, original)
+    end)
+  end
+
+  defp escape_unescaped_specials(text) do
+    text
+    |> then(&Regex.replace(~r/(?<!\\)_/, &1, "\\\\_"))
+    |> then(&Regex.replace(~r/(?<!\\)%/, &1, "\\\\%"))
+    |> then(&Regex.replace(~r/(?<!\\)&/, &1, "\\\\&"))
+    |> then(&Regex.replace(~r/(?<!\\)#/, &1, "\\\\#"))
   end
 end

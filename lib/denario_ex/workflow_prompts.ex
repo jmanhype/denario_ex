@@ -158,6 +158,18 @@ defmodule DenarioEx.WorkflowPrompts do
     Previous execution error: #{if previous_error == "", do: "none", else: previous_error}
 
     Return code that prints all quantitative information needed for a scientific results section.
+    The script must be deterministic, concise, and runnable in a small local CPU-only environment.
+
+    Execution requirements:
+    - Must finish in under 20 seconds on a single CPU core.
+    - Use only Python stdlib plus lightweight scientific packages such as numpy, pandas, scipy, matplotlib, seaborn, or scikit-learn unless the methodology explicitly requires something else.
+    - Do not use heavyweight probabilistic or deep-learning stacks such as PyMC, PyMC3, ArviZ, TensorFlow, PyTorch, JAX, Stan, or long MCMC / NUTS / sampling loops.
+    - Do not download data, call external services, open GUIs, or rely on notebooks.
+    - Save plots as PNG files in the current working directory with plt.savefig(...), then call plt.close('all').
+    - Never call plt.show().
+    - Produce at most one PNG figure unless the step explicitly requires more.
+    - Use fixed random seeds for any synthetic data.
+    - If the previous execution timed out or failed, simplify aggressively and remove expensive computation.
     """
   end
 

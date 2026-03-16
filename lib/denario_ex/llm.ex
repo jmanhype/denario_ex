@@ -19,6 +19,21 @@ defmodule DenarioEx.LLM do
     "gpt-5-mini" => {"openai:gpt-5-mini", nil}
   }
 
+  @provider_aliases %{
+    "anthropic" => :anthropic,
+    "deepseek" => :deepseek,
+    "google" => :google,
+    "google-vertex" => :google_vertex,
+    "google_vertex" => :google_vertex,
+    "groq" => :groq,
+    "mistral" => :mistral,
+    "ollama" => :ollama,
+    "openai" => :openai,
+    "openrouter" => :openrouter,
+    "perplexity" => :perplexity,
+    "xai" => :xai
+  }
+
   @enforce_keys [:spec, :model, :provider, :max_output_tokens]
   defstruct [:spec, :model, :provider, :max_output_tokens, :temperature]
 
@@ -61,8 +76,13 @@ defmodule DenarioEx.LLM do
             "openai:#{name}"
           end
 
-        {provider, model_id} = LLMDB.parse!(spec)
-        {LLMDB.format({provider, model_id}), default_temperature(provider, model_id)}
+        case parse_spec(spec) do
+          {:ok, {provider, model_id}} ->
+            {format_spec(provider, model_id), default_temperature(provider, model_id)}
+
+          {:error, reason} ->
+            raise ArgumentError, "invalid model spec: #{inspect(spec)} (#{inspect(reason)})"
+        end
     end
   end
 
@@ -72,8 +92,9 @@ defmodule DenarioEx.LLM do
         {:ok, model}
 
       {:error, _reason} ->
-        {provider, model_id} = LLMDB.parse!(spec)
-        ReqLLM.model(%{provider: provider, id: model_id})
+        with {:ok, {provider, model_id}} <- parse_spec(spec) do
+          ReqLLM.model(%{provider: provider, id: model_id})
+        end
     end
   end
 
@@ -96,5 +117,49 @@ defmodule DenarioEx.LLM do
 
   defp reasoning_model?(model_id) do
     String.starts_with?(model_id, ["gpt-5", "o1", "o3", "o4"])
+  end
+
+  defp parse_spec(spec) do
+    try do
+      {:ok, LLMDB.parse!(spec)}
+    rescue
+      ArgumentError -> manual_parse_spec(spec)
+    end
+  end
+
+  defp manual_parse_spec(spec) do
+    cond do
+      String.contains?(spec, ":") ->
+        [provider_part, model_id] = String.split(spec, ":", parts: 2)
+        build_spec(provider_part, model_id, spec)
+
+      String.contains?(spec, "@") ->
+        [model_id, provider_part] = String.split(spec, "@", parts: 2)
+        build_spec(provider_part, model_id, spec)
+
+      true ->
+        {:error, :invalid_model_spec}
+    end
+  end
+
+  defp build_spec(provider_part, model_id, spec) do
+    provider_key = provider_part |> String.trim() |> String.downcase()
+    model_id = String.trim(model_id)
+
+    case Map.fetch(@provider_aliases, provider_key) do
+      {:ok, provider} when model_id != "" ->
+        {:ok, {provider, model_id}}
+
+      _ ->
+        {:error, {:invalid_model_spec, spec}}
+    end
+  end
+
+  defp format_spec(provider, model_id) do
+    try do
+      LLMDB.format({provider, model_id})
+    rescue
+      _ -> "#{provider}:#{model_id}"
+    end
   end
 end

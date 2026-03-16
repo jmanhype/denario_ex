@@ -126,6 +126,16 @@ defmodule DenarioEx do
     {:ok, %{session | research: %{session.research | plot_paths: copied_paths}}}
   end
 
+  @spec reset(t()) :: {:ok, t()}
+  def reset(%__MODULE__{} = session) do
+    {:ok, %{session | research: %Research{}}}
+  end
+
+  @spec set_all(t()) :: {:ok, t()}
+  def set_all(%__MODULE__{} = session) do
+    {:ok, load_existing_content(session)}
+  end
+
   @spec show_data_description(t()) :: String.t()
   def show_data_description(%__MODULE__{} = session), do: session.research.data_description
 
@@ -140,6 +150,28 @@ defmodule DenarioEx do
 
   @spec show_literature(t()) :: String.t()
   def show_literature(%__MODULE__{} = session), do: session.research.literature
+
+  @spec show_keywords(t()) :: String.t()
+  def show_keywords(%__MODULE__{} = session) do
+    case session.research.keywords do
+      keywords when is_map(keywords) and map_size(keywords) > 0 ->
+        Enum.map_join(keywords, "\n", fn {keyword, url} ->
+          if is_binary(url) and url != "" do
+            "- [#{keyword}](#{url})"
+          else
+            "- #{keyword}"
+          end
+        end)
+
+      keywords when is_list(keywords) ->
+        keywords
+        |> Enum.filter(&(is_binary(&1) and &1 != ""))
+        |> Enum.map_join("\n", &"- #{&1}")
+
+      _ ->
+        ""
+    end
+  end
 
   @spec get_idea(t(), keyword()) :: {:ok, t()} | {:error, term()}
   def get_idea(%__MODULE__{} = session, opts \\ []) do
@@ -303,6 +335,18 @@ defmodule DenarioEx do
     end
   end
 
+  @spec research_pilot(t(), String.t() | nil, keyword()) :: {:ok, t()} | {:error, term()}
+  def research_pilot(%__MODULE__{} = session, data_description \\ nil, opts \\ []) do
+    with {:ok, session} <- maybe_prepare_data_description(session, data_description),
+         {:ok, session} <- get_idea(session, Keyword.get(opts, :idea, [])),
+         {:ok, session} <- get_method(session, Keyword.get(opts, :method, [])),
+         {:ok, session} <- get_results(session, Keyword.get(opts, :results, [])),
+         {:ok, session} <- maybe_run_literature(session, Keyword.get(opts, :literature, :skip)),
+         {:ok, session} <- get_paper(session, Keyword.get(opts, :paper, [])) do
+      {:ok, session}
+    end
+  end
+
   defp iterate_idea(
          _session,
          _client,
@@ -379,6 +423,24 @@ defmodule DenarioEx do
   defp complete(client, prompt, %LLM{} = llm, %KeyManager{} = keys) do
     AI.complete(client, prompt, llm, keys)
   end
+
+  defp maybe_prepare_data_description(%__MODULE__{} = session, nil) do
+    refreshed = load_existing_content(session)
+
+    with :ok <- ensure_present(refreshed.research.data_description, :data_description) do
+      {:ok, refreshed}
+    end
+  end
+
+  defp maybe_prepare_data_description(%__MODULE__{} = session, data_description)
+       when is_binary(data_description) do
+    set_data_description(session, data_description)
+  end
+
+  defp maybe_run_literature(%__MODULE__{} = session, :skip), do: {:ok, session}
+
+  defp maybe_run_literature(%__MODULE__{} = session, opts) when is_list(opts),
+    do: check_idea(session, opts)
 
   defp ensure_present("", field), do: {:error, {:missing_field, field}}
   defp ensure_present(nil, field), do: {:error, {:missing_field, field}}
