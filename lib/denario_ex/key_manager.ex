@@ -5,6 +5,7 @@ defmodule DenarioEx.KeyManager do
 
   @enforce_keys []
   defstruct anthropic: nil,
+            future_house: nil,
             gemini: nil,
             openai: nil,
             perplexity: nil,
@@ -12,6 +13,7 @@ defmodule DenarioEx.KeyManager do
 
   @type t :: %__MODULE__{
           anthropic: String.t() | nil,
+          future_house: String.t() | nil,
           gemini: String.t() | nil,
           openai: String.t() | nil,
           perplexity: String.t() | nil,
@@ -24,6 +26,7 @@ defmodule DenarioEx.KeyManager do
       openai: first_env(["OPENAI_API_KEY"]),
       gemini: first_env(["GOOGLE_API_KEY", "GEMINI_API_KEY"]),
       anthropic: first_env(["ANTHROPIC_API_KEY"]),
+      future_house: first_env(["FUTURE_HOUSE_API_KEY"]),
       perplexity: first_env(["PERPLEXITY_API_KEY"]),
       semantic_scholar:
         first_env(["SEMANTIC_SCHOLAR_KEY", "SEMANTIC_SCHOLAR_API_KEY", "S2_API_KEY"])

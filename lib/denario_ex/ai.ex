@@ -3,11 +3,9 @@ defmodule DenarioEx.AI do
 
   alias DenarioEx.{KeyManager, LLM}
 
-  @spec complete(module(), String.t(), LLM.t(), KeyManager.t()) ::
+  @spec complete_messages(module(), [map()], LLM.t(), KeyManager.t()) ::
           {:ok, String.t()} | {:error, term()}
-  def complete(client, prompt, %LLM{} = llm, %KeyManager{} = keys) do
-    messages = [%{role: "user", content: prompt}]
-
+  def complete_messages(client, messages, %LLM{} = llm, %KeyManager{} = keys) do
     client.complete(messages,
       api_key: KeyManager.api_key_for_provider(keys, llm.provider),
       model: llm.spec,
@@ -15,6 +13,13 @@ defmodule DenarioEx.AI do
       temperature: llm.temperature,
       max_output_tokens: llm.max_output_tokens
     )
+  end
+
+  @spec complete(module(), String.t(), LLM.t(), KeyManager.t()) ::
+          {:ok, String.t()} | {:error, term()}
+  def complete(client, prompt, %LLM{} = llm, %KeyManager{} = keys) do
+    messages = [%{role: "user", content: prompt}]
+    complete_messages(client, messages, llm, keys)
   end
 
   @spec generate_object(module(), String.t(), map(), LLM.t(), KeyManager.t()) ::

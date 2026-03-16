@@ -10,6 +10,7 @@ defmodule DenarioEx.KeyManagerTest do
             "GOOGLE_API_KEY",
             "GEMINI_API_KEY",
             "ANTHROPIC_API_KEY",
+            "FUTURE_HOUSE_API_KEY",
             "PERPLEXITY_API_KEY",
             "SEMANTIC_SCHOLAR_KEY",
             "SEMANTIC_SCHOLAR_API_KEY",
@@ -33,12 +34,14 @@ defmodule DenarioEx.KeyManagerTest do
   test "from_env reads common provider env vars and semantic scholar aliases" do
     System.put_env("OPENAI_API_KEY", "openai-key")
     System.put_env("GEMINI_API_KEY", "gemini-key")
+    System.put_env("FUTURE_HOUSE_API_KEY", "fh-key")
     System.put_env("SEMANTIC_SCHOLAR_API_KEY", "s2-key")
 
     keys = KeyManager.from_env()
 
     assert keys.openai == "openai-key"
     assert keys.gemini == "gemini-key"
+    assert keys.future_house == "fh-key"
     assert keys.semantic_scholar == "s2-key"
   end
 

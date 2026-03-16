@@ -438,6 +438,114 @@ defmodule DenarioEx.WorkflowPrompts do
     """
   end
 
+  @spec keyword_selection_prompt(String.t(), String.t(), String.t(), String.t(), pos_integer()) ::
+          String.t()
+  def keyword_selection_prompt(family, stage, input_text, candidates, n_keywords) do
+    """
+    [DENARIO_KEYWORDS][#{family}][#{stage}]
+    Select the most relevant taxonomy keywords for the provided research text.
+
+    Input text:
+    #{input_text}
+
+    Candidate keywords:
+    #{candidates}
+
+    Return at most #{n_keywords} exact candidate strings. Do not invent new keywords.
+    """
+  end
+
+  @spec description_enhancement_prompt(String.t()) :: String.t()
+  def description_enhancement_prompt(data_description) do
+    """
+    [DENARIO_ENHANCE_DESCRIPTION][DRAFT]
+    Rewrite the research data description so it is clearer, more structured, and more useful for downstream scientific planning.
+
+    Requirements:
+    - preserve the original intent
+    - make the research objective explicit
+    - call out measurable outcomes or constraints when present
+    - keep the result concise and directly actionable
+
+    Original description:
+    #{data_description}
+
+    Return only the rewritten description.
+    """
+  end
+
+  @spec description_enhancement_format_prompt(String.t(), String.t()) :: String.t()
+  def description_enhancement_format_prompt(original_description, draft) do
+    """
+    [DENARIO_ENHANCE_DESCRIPTION][FORMAT]
+    Format the enhanced data description into one clean markdown block ready to overwrite `data_description.md`.
+
+    Original description:
+    #{original_description}
+
+    Draft rewrite:
+    #{draft}
+
+    Respond exactly in this format:
+
+    \\begin{ENHANCED_DESCRIPTION}
+    <ENHANCED_DESCRIPTION>
+    \\end{ENHANCED_DESCRIPTION}
+    """
+  end
+
+  @spec futurehouse_prompt(String.t()) :: String.t()
+  def futurehouse_prompt(idea) do
+    """
+    Has anyone worked on or explored the following idea?
+
+    #{idea}
+
+    <DESIRED_RESPONSE_FORMAT>
+    Answer: <yes or no>
+
+    Related previous work: <describe previous literature on the topic>
+    </DESIRED_RESPONSE_FORMAT>
+    """
+  end
+
+  @spec referee_review_prompt(map(), String.t()) :: String.t()
+  def referee_review_prompt(research, paper_source) do
+    """
+    [DENARIO_REFEREE_REVIEW]
+    You are a scientific referee reviewing a paper draft. Inspect the paper carefully and write a rigorous report.
+
+    Review goals:
+    - identify strengths worth keeping
+    - find methodological flaws, unsupported claims, or missing evidence
+    - point out revisions that would materially improve the paper
+    - judge whether the paper is publication-worthy
+    - give a score from 0 to 9, where 0 is very poor and 9 is outstanding
+
+    Project context:
+    Data description:
+    #{Map.get(research, :data_description, "")}
+
+    Idea:
+    #{Map.get(research, :idea, "")}
+
+    Methodology:
+    #{Map.get(research, :methodology, "")}
+
+    Results:
+    #{Map.get(research, :results, "")}
+
+    Paper source:
+    #{paper_source}
+
+    Respond exactly in this format:
+
+    \\begin{REVIEW}
+    <REVIEW>
+    \\end{REVIEW}
+    """
+  end
+
   defp render_steps(steps) do
     steps
     |> Enum.map_join("\n", fn step ->

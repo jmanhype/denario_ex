@@ -8,29 +8,24 @@ defmodule DenarioEx do
 
   alias DenarioEx.{
     AI,
+    ArtifactRegistry,
     CMBAgentLoop,
+    DescriptionEnhancementWorkflow,
+    FutureHouseWorkflow,
     KeyManager,
+    KeywordWorkflow,
     LLM,
     LiteratureWorkflow,
     PaperWorkflow,
     PromptTemplates,
     ReqLLMClient,
     Research,
+    ReviewWorkflow,
     ResultsWorkflow,
     Text
   }
 
   @default_project_name "project"
-  @input_files "input_files"
-  @plots_folder "plots"
-  @paper_folder "paper"
-  @description_file "data_description.md"
-  @idea_file "idea.md"
-  @method_file "methods.md"
-  @results_file "results.md"
-  @literature_file "literature.md"
-  @paper_tex_file "paper_v4_final.tex"
-  @paper_pdf_file "paper_v4_final.pdf"
 
   @enforce_keys [:project_dir, :input_files_dir, :plots_dir, :keys, :research]
   defstruct [:project_dir, :input_files_dir, :plots_dir, :keys, :research]
@@ -67,10 +62,10 @@ defmodule DenarioEx do
       File.rm_rf!(project_dir)
     end
 
-    input_files_dir = Path.join(project_dir, @input_files)
-    plots_dir = Path.join(input_files_dir, @plots_folder)
+    ArtifactRegistry.ensure_project_dirs(project_dir)
 
-    File.mkdir_p!(plots_dir)
+    input_files_dir = ArtifactRegistry.input_files_dir(project_dir)
+    plots_dir = ArtifactRegistry.plots_dir(project_dir)
 
     session = %__MODULE__{
       project_dir: project_dir,
@@ -85,27 +80,27 @@ defmodule DenarioEx do
 
   @spec set_data_description(t(), String.t()) :: {:ok, t()}
   def set_data_description(%__MODULE__{} = session, data_description) do
-    write_field(session, @description_file, data_description, :data_description)
+    write_field(session, :data_description, data_description, :data_description)
   end
 
   @spec set_idea(t(), String.t()) :: {:ok, t()}
   def set_idea(%__MODULE__{} = session, idea) do
-    write_field(session, @idea_file, idea, :idea)
+    write_field(session, :idea, idea, :idea)
   end
 
   @spec set_method(t(), String.t()) :: {:ok, t()}
   def set_method(%__MODULE__{} = session, method) do
-    write_field(session, @method_file, method, :methodology)
+    write_field(session, :methodology, method, :methodology)
   end
 
   @spec set_results(t(), String.t()) :: {:ok, t()}
   def set_results(%__MODULE__{} = session, results) do
-    write_field(session, @results_file, results, :results)
+    write_field(session, :results, results, :results)
   end
 
   @spec set_literature(t(), String.t()) :: {:ok, t()}
   def set_literature(%__MODULE__{} = session, literature) do
-    write_field(session, @literature_file, literature, :literature)
+    write_field(session, :literature, literature, :literature)
   end
 
   @spec set_plots(t(), [String.t()] | nil) :: {:ok, t()}
@@ -168,8 +163,34 @@ defmodule DenarioEx do
         |> Enum.filter(&(is_binary(&1) and &1 != ""))
         |> Enum.map_join("\n", &"- #{&1}")
 
+      keywords when is_binary(keywords) ->
+        keywords
+        |> String.split(",", trim: true)
+        |> Enum.map(&String.trim/1)
+        |> Enum.reject(&(&1 == ""))
+        |> Enum.map_join("\n", &"- #{&1}")
+
       _ ->
         ""
+    end
+  end
+
+  @spec get_keywords(t(), String.t() | nil, keyword()) :: {:ok, t()} | {:error, term()}
+  def get_keywords(%__MODULE__{} = session, input_text \\ nil, opts \\ []) do
+    with {:ok, result} <- KeywordWorkflow.run(session, input_text, opts),
+         {:ok, updated} <- update_keywords(session, result.keywords, result.kw_type) do
+      {:ok, updated}
+    end
+  end
+
+  @spec enhance_data_description(t(), keyword()) :: {:ok, t()} | {:error, term()}
+  def enhance_data_description(%__MODULE__{} = session, opts \\ []) do
+    refreshed = load_existing_content(session)
+
+    with :ok <- ensure_present(refreshed.research.data_description, :data_description),
+         {:ok, enhanced} <- DescriptionEnhancementWorkflow.run(refreshed, opts),
+         {:ok, updated} <- set_data_description(refreshed, enhanced) do
+      {:ok, updated}
     end
   end
 
@@ -299,8 +320,21 @@ defmodule DenarioEx do
            }}
         end
 
+      mode when mode in [:futurehouse, "futurehouse"] ->
+        check_idea_futurehouse(session, opts)
+
       other ->
         {:error, {:unsupported_literature_mode, other}}
+    end
+  end
+
+  @spec check_idea_futurehouse(t(), keyword()) :: {:ok, t()} | {:error, term()}
+  def check_idea_futurehouse(%__MODULE__{} = session, opts \\ []) do
+    with :ok <- ensure_present(session.research.data_description, :data_description),
+         :ok <- ensure_present(session.research.idea, :idea),
+         {:ok, result} <- FutureHouseWorkflow.run(session, opts),
+         {:ok, updated} <- set_literature(session, result.literature) do
+      {:ok, %{updated | research: %{updated.research | literature_sources: result.sources}}}
     end
   end
 
@@ -321,17 +355,26 @@ defmodule DenarioEx do
     with :ok <- ensure_present(session.research.idea, :idea),
          :ok <- ensure_present(session.research.methodology, :methodology),
          :ok <- ensure_present(session.research.results, :results),
-         {:ok, result} <- PaperWorkflow.run(session, opts) do
+         {:ok, result} <- PaperWorkflow.run(session, opts),
+         {:ok, updated} <- update_keywords(session, result.keywords, :paper) do
       {:ok,
        %{
-         session
+         updated
          | research: %{
-             session.research
+             updated.research
              | keywords: result.keywords,
                paper_tex_path: result.tex_path,
                paper_pdf_path: result.pdf_path
            }
        }}
+    end
+  end
+
+  @spec referee(t(), keyword()) :: {:ok, t()} | {:error, term()}
+  def referee(%__MODULE__{} = session, opts \\ []) do
+    with {:ok, result} <- ReviewWorkflow.run(session, opts),
+         {:ok, updated} <- write_field(session, :referee_report, result.report, :referee_report) do
+      {:ok, %{updated | research: %{updated.research | referee_report: result.report}}}
     end
   end
 
@@ -446,12 +489,17 @@ defmodule DenarioEx do
   defp ensure_present(nil, field), do: {:error, {:missing_field, field}}
   defp ensure_present(_, _field), do: :ok
 
-  defp write_field(%__MODULE__{} = session, filename, value, field) do
+  defp write_field(%__MODULE__{} = session, artifact, value, field) do
     content = read_content!(value)
-    destination = Path.join(session.input_files_dir, filename)
-    File.write!(destination, content)
+    ArtifactRegistry.write_text(session.project_dir, artifact, content)
     updated_research = Map.put(session.research, field, content)
     {:ok, %{session | research: updated_research}}
+  end
+
+  defp update_keywords(%__MODULE__{} = session, keywords, kw_type)
+       when is_map(keywords) or is_list(keywords) do
+    ArtifactRegistry.persist_keywords(session.project_dir, keywords, kw_type: kw_type)
+    {:ok, %{session | research: %{session.research | keywords: keywords}}}
   end
 
   defp read_content!(value) when is_binary(value) do
@@ -463,45 +511,6 @@ defmodule DenarioEx do
   end
 
   defp load_existing_content(%__MODULE__{} = session) do
-    research =
-      session.research
-      |> maybe_load_field(session.input_files_dir, @description_file, :data_description)
-      |> maybe_load_field(session.input_files_dir, @idea_file, :idea)
-      |> maybe_load_field(session.input_files_dir, @method_file, :methodology)
-      |> maybe_load_field(session.input_files_dir, @results_file, :results)
-      |> maybe_load_field(session.input_files_dir, @literature_file, :literature)
-      |> Map.put(:plot_paths, Path.wildcard(Path.join(session.plots_dir, "*.png")))
-      |> maybe_set_path(
-        Path.join(session.project_dir, @paper_folder),
-        @paper_tex_file,
-        :paper_tex_path
-      )
-      |> maybe_set_path(
-        Path.join(session.project_dir, @paper_folder),
-        @paper_pdf_file,
-        :paper_pdf_path
-      )
-
-    %{session | research: research}
-  end
-
-  defp maybe_load_field(research, input_files_dir, filename, field) do
-    path = Path.join(input_files_dir, filename)
-
-    if File.regular?(path) do
-      Map.put(research, field, File.read!(path))
-    else
-      research
-    end
-  end
-
-  defp maybe_set_path(research, folder, filename, field) do
-    path = Path.join(folder, filename)
-
-    if File.regular?(path) do
-      Map.put(research, field, path)
-    else
-      research
-    end
+    %{session | research: ArtifactRegistry.load_research(session.project_dir, session.research)}
   end
 end

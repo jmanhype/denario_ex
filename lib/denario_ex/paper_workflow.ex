@@ -1,7 +1,7 @@
 defmodule DenarioEx.PaperWorkflow do
   @moduledoc false
 
-  alias DenarioEx.{AI, LLM, ReqLLMClient, Text, WorkflowPrompts}
+  alias DenarioEx.{AI, ArtifactRegistry, LLM, ReqLLMClient, Text, WorkflowPrompts}
 
   @asset_dir Path.expand("../../priv/latex", __DIR__)
 
@@ -22,10 +22,10 @@ defmodule DenarioEx.PaperWorkflow do
     journal = normalize_journal(Keyword.get(opts, :journal, :none))
     add_citations = Keyword.get(opts, :add_citations, true)
     compile? = Keyword.get(opts, :compile, true)
-    paper_dir = Path.join(session.project_dir, "paper")
-    tex_name = "paper_v4_final.tex"
-    tex_path = Path.join(paper_dir, tex_name)
-    pdf_path = Path.join(paper_dir, "paper_v4_final.pdf")
+    paper_dir = ArtifactRegistry.paper_dir(session.project_dir)
+    tex_name = Path.basename(ArtifactRegistry.path(session.project_dir, :paper_tex))
+    tex_path = ArtifactRegistry.path(session.project_dir, :paper_tex)
+    pdf_path = ArtifactRegistry.path(session.project_dir, :paper_pdf)
     preset = journal_preset(journal)
     plot_paths = available_plot_paths(session)
 
@@ -36,6 +36,7 @@ defmodule DenarioEx.PaperWorkflow do
          keywords <- existing_keywords(session.research.keywords),
          keywords <-
            maybe_generate_keywords(keywords, client, llm, session.keys, writer, session.research),
+         keyword_state <- normalize_keyword_state(session.research.keywords, keywords),
          {:ok, abstract_object} <-
            AI.generate_object(
              client,
@@ -117,7 +118,7 @@ defmodule DenarioEx.PaperWorkflow do
          :ok <- File.write(tex_path, tex),
          {:ok, compiled_pdf_path} <-
            maybe_compile(compile?, tex_name, pdf_path, paper_dir, add_citations) do
-      {:ok, %{tex_path: tex_path, pdf_path: compiled_pdf_path, keywords: keywords}}
+      {:ok, %{tex_path: tex_path, pdf_path: compiled_pdf_path, keywords: keyword_state}}
     end
   end
 
@@ -161,10 +162,25 @@ defmodule DenarioEx.PaperWorkflow do
 
   defp available_plot_paths(session) do
     if session.research.plot_paths == [] do
-      Path.wildcard(Path.join(session.project_dir, "input_files/plots/*.png"))
+      Path.wildcard(Path.join(ArtifactRegistry.plots_dir(session.project_dir), "*.png"))
     else
       session.research.plot_paths
     end
+  end
+
+  defp normalize_keyword_state(keywords, _latex_keywords)
+       when is_map(keywords) and map_size(keywords) > 0,
+       do: keywords
+
+  defp normalize_keyword_state(keywords, _latex_keywords)
+       when is_list(keywords) and keywords != [],
+       do: keywords
+
+  defp normalize_keyword_state(_keywords, latex_keywords) do
+    latex_keywords
+    |> String.split(",", trim: true)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
   end
 
   defp generate_section(client, llm, keys, section, writer, context, citation_context) do
