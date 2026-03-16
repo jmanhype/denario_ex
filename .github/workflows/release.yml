@@ -39,6 +39,31 @@ jobs:
         run: mix test
 
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: actions/github-script@v8
         with:
-          generate_release_notes: true
+          github-token: ${{ github.token }}
+          script: |
+            const tag = context.ref.replace("refs/tags/", "");
+
+            try {
+              const existing = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag
+              });
+
+              core.info(`Release already exists for ${tag}: ${existing.data.html_url}`);
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+
+              const release = await github.rest.repos.createRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tag,
+                generate_release_notes: true
+              });
+
+              core.info(`Created release: ${release.data.html_url}`);
+            }
