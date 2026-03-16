@@ -4,10 +4,11 @@ defmodule DenarioEx.MixProject do
   def project do
     [
       app: :denario_ex,
-      version: "0.1.0",
+      version: "0.1.2",
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
-      description: "Initial Elixir port of the Denario research workflow using ReqLLM and LLMDB",
+      description:
+        "Standalone Elixir research workflow for idea, results, literature, and paper generation",
       deps: deps()
     ]
   end

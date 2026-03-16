@@ -3,97 +3,61 @@
 [![CI](https://github.com/jmanhype/denario_ex/actions/workflows/ci.yml/badge.svg)](https://github.com/jmanhype/denario_ex/actions/workflows/ci.yml)
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 
-Standalone Elixir port of the Denario workflow, extracted from
-`AstroPilot-AI/Denario`.
+DenarioEx is a standalone Elixir implementation of the Denario research workflow:
+idea generation, method drafting, results execution, literature checking, and
+paper generation.
 
-Implemented:
+It is built around `ReqLLM` and `LLMDB`, keeps project artifacts on disk, and
+can run either as a real OpenAI-backed workflow or as a fully offline demo.
 
-- project/session lifecycle
-- `input_files` persistence
-- provider key loading
-- `LLMDB` model resolution
-- `ReqLLM`-backed fast idea and method generation
-- `cmbagent`-style planning/control loop for idea and method generation
-- `get_results/2` with code generation, execution, retries, and plot harvesting
+## What It Covers
+
+- project/session lifecycle with persisted `input_files/`
+- fast and `cmbagent`-style idea and method generation
+- `get_results/2` with planning, code generation, execution, retries, and plot harvesting
 - literature checking via Semantic Scholar with OpenAlex fallback
-- paper generation to LaTeX with optional bibliography and compile step
+- LaTeX paper generation with optional bibliography and PDF compilation
 
-## Setup
+## Quickstart
 
 ```bash
 mix deps.get
 mix test
 ```
 
-## Releases
+## Offline Demo
 
-GitHub releases are created from version tags.
+The fastest way to see the full workflow without API keys or network access is:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+mix run examples/offline_demo.exs
 ```
 
-The release workflow runs the test suite first and then publishes a GitHub release
-with generated notes.
+That script runs a deterministic end-to-end flow with fake LLM, execution, and
+literature clients, then writes a complete demo project directory containing:
 
-## Temporary `req_llm` pin
+- `input_files/data_description.md`
+- `input_files/idea.md`
+- `input_files/methods.md`
+- `input_files/results.md`
+- `input_files/literature.md`
+- `input_files/plots/anomaly_scores.png`
+- `paper/paper_v4_final.tex`
 
-`DenarioEx` is temporarily pinned to a Git commit of `req_llm` instead of the Hex release.
+To control the output directory:
 
-- Current pin: `jmanhype/req_llm@ee00b4553cd6823b48c1045b825565855a77a93b`
-- Upstream PR: <https://github.com/agentjido/req_llm/pull/506>
+```bash
+DENARIO_EX_DEMO_DIR=/tmp/denario_ex_demo mix run examples/offline_demo.exs
+```
 
-Why this exists:
+## Real OpenAI Workflow
 
-- `req_llm` `1.7.1` still injects `:max_tokens` for some OpenAI reasoning/object requests
-- that triggers noisy `Renamed :max_tokens to :max_completion_tokens` warnings
-- the pinned commit removes that library-side warning path
-
-When the upstream PR is merged and a new Hex release includes the fix, switch
-`mix.exs` back to the published `{:req_llm, "~> ..."}` dependency and refresh `mix.lock`.
-
-## Credentials
-
-The Elixir port reads these environment variables:
-
-- OpenAI: `OPENAI_API_KEY`
-- Gemini: `GOOGLE_API_KEY` or `GEMINI_API_KEY`
-- Anthropic: `ANTHROPIC_API_KEY`
-- Perplexity: `PERPLEXITY_API_KEY`
-- Semantic Scholar: `SEMANTIC_SCHOLAR_KEY`, `SEMANTIC_SCHOLAR_API_KEY`, or `S2_API_KEY`
-
-For citation-backed literature checking, export a Semantic Scholar key before running:
+For a real run, export your OpenAI key and use the library directly:
 
 ```bash
 export OPENAI_API_KEY=...
-export SEMANTIC_SCHOLAR_API_KEY=...
+iex -S mix
 ```
-
-Without a Semantic Scholar key, `check_idea/2` first falls back to OpenAlex. It only degrades to
-`Idea literature search unavailable` if both providers fail.
-
-## Minimal usage
-
-```elixir
-alias DenarioEx
-
-{:ok, denario} =
-  DenarioEx.new(project_dir: "/tmp/denario_elixir_demo", clear_project_dir: true)
-
-{:ok, denario} =
-  DenarioEx.set_data_description(
-    denario,
-    """
-    Analyze a small hypothetical lab sensor dataset and propose one simple paper idea.
-    """
-  )
-
-{:ok, denario} = DenarioEx.get_idea_fast(denario, llm: "openai:gpt-4.1-mini")
-{:ok, denario} = DenarioEx.get_method_fast(denario, llm: "openai:gpt-4.1-mini")
-```
-
-## Full workflow
 
 ```elixir
 alias DenarioEx
@@ -107,17 +71,73 @@ alias DenarioEx
     "Generate a tiny synthetic anomaly-score dataset, summarize it, and write a short paper."
   )
 
-{:ok, denario} = DenarioEx.get_idea(denario, mode: :cmbagent, planner_model: "openai:gpt-4.1-mini")
-{:ok, denario} = DenarioEx.get_method(denario, mode: :cmbagent, planner_model: "openai:gpt-4.1-mini")
-{:ok, denario} = DenarioEx.get_results(denario, planner_model: "openai:gpt-4.1-mini", engineer_model: "openai:gpt-4.1-mini")
+{:ok, denario} =
+  DenarioEx.get_idea(
+    denario,
+    mode: :cmbagent,
+    planner_model: "openai:gpt-4.1-mini"
+  )
+
+{:ok, denario} =
+  DenarioEx.get_method(
+    denario,
+    mode: :cmbagent,
+    planner_model: "openai:gpt-4.1-mini"
+  )
+
+{:ok, denario} =
+  DenarioEx.get_results(
+    denario,
+    planner_model: "openai:gpt-4.1-mini",
+    engineer_model: "openai:gpt-4.1-mini"
+  )
+
 {:ok, denario} = DenarioEx.check_idea(denario, llm: "openai:gpt-4.1-mini")
 {:ok, denario} = DenarioEx.get_paper(denario, llm: "openai:gpt-4.1-mini", compile: false)
 ```
 
-## Source lineage
+## Credentials
 
-This repository started as an extraction from the Elixir port previously developed in:
+DenarioEx reads these environment variables:
 
-- <https://github.com/AstroPilot-AI/Denario>
+- OpenAI: `OPENAI_API_KEY`
+- Gemini: `GOOGLE_API_KEY` or `GEMINI_API_KEY`
+- Anthropic: `ANTHROPIC_API_KEY`
+- Perplexity: `PERPLEXITY_API_KEY`
+- Semantic Scholar: `SEMANTIC_SCHOLAR_KEY`, `SEMANTIC_SCHOLAR_API_KEY`, or `S2_API_KEY`
 
-The active standalone codebase now lives here in `jmanhype/denario_ex`.
+`check_idea/2` uses Semantic Scholar first and falls back to OpenAlex when no
+Semantic Scholar key is present or the public endpoint is rate-limited.
+
+## Releases
+
+GitHub releases are cut from tags:
+
+```bash
+git tag v0.1.2
+git push origin v0.1.2
+```
+
+The release workflow runs the test suite and publishes a GitHub release with
+generated notes.
+
+## Temporary `req_llm` Pin
+
+This repo is temporarily pinned to a Git commit of `req_llm` instead of the
+latest Hex release.
+
+- Current pin: `jmanhype/req_llm@ee00b4553cd6823b48c1045b825565855a77a93b`
+- Upstream fix: <https://github.com/agentjido/req_llm/pull/506>
+
+This exists because `req_llm` `1.7.1` still injects `:max_tokens` for some
+OpenAI reasoning/object calls, which causes noisy
+`Renamed :max_tokens to :max_completion_tokens` warnings.
+
+Once that fix lands in Hex, replace the Git dependency in `mix.exs` with the
+published version and refresh `mix.lock`.
+
+## Source Lineage
+
+This repository started as an extraction from the Elixir port previously
+developed in `AstroPilot-AI/Denario`, and now continues independently as the
+standalone `denario_ex` project.
