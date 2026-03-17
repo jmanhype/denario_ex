@@ -200,6 +200,38 @@ defmodule DenarioEx.ParityExtensionsTest do
            ]
   end
 
+  test "get_keywords emits staged progress callback events", %{project_dir: project_dir} do
+    assert {:ok, denario} = DenarioEx.new(project_dir: project_dir, clear_project_dir: true)
+
+    assert {:ok, denario} =
+             DenarioEx.set_idea(denario, "Urban acoustic anomaly detection.")
+
+    assert {:ok, denario} = DenarioEx.set_method(denario, "Use interpretable anomaly scoring.")
+
+    assert {:ok, denario} =
+             DenarioEx.set_results(
+               denario,
+               "Noise spikes separate abnormal events from normal periods."
+             )
+
+    callback = &send(self(), {:keyword_progress, &1})
+
+    assert {:ok, _denario} =
+             DenarioEx.get_keywords(
+               denario,
+               nil,
+               client: FakeClient,
+               llm: "openai:gpt-4.1-mini",
+               kw_type: :unesco,
+               n_keywords: 3,
+               progress_callback: callback
+             )
+
+    assert_received {:keyword_progress, %{stage: "keywords:start", kind: :started}}
+    assert_received {:keyword_progress, %{stage: "keywords:unesco_level1"}}
+    assert_received {:keyword_progress, %{stage: "keywords:complete", status: :success}}
+  end
+
   test "enhance_data_description overwrites the persisted description", %{
     project_dir: project_dir
   } do
@@ -275,6 +307,36 @@ defmodule DenarioEx.ParityExtensionsTest do
                      "https://api.platform.futurehouse.org"}
 
     assert String.contains?(prompt, "Has anyone worked on or explored the following idea?")
+  end
+
+  test "futurehouse workflow emits progress callback events", %{project_dir: project_dir} do
+    keys = %DenarioEx.KeyManager{future_house: "fh-key"}
+
+    assert {:ok, denario} =
+             DenarioEx.new(project_dir: project_dir, clear_project_dir: true, keys: keys)
+
+    assert {:ok, denario} =
+             DenarioEx.set_data_description(denario, "Urban sensor anomaly project.")
+
+    assert {:ok, denario} =
+             DenarioEx.set_idea(
+               denario,
+               "Interpretable anomaly detection for urban microclimate sensor networks."
+             )
+
+    callback = &send(self(), {:futurehouse_progress, &1})
+
+    assert {:ok, _denario} =
+             DenarioEx.check_idea(
+               denario,
+               mode: :futurehouse,
+               future_house_client: FakeFutureHouseClient,
+               base_url: "https://api.platform.futurehouse.org",
+               progress_callback: callback
+             )
+
+    assert_received {:futurehouse_progress, %{stage: "futurehouse:start", kind: :started}}
+    assert_received {:futurehouse_progress, %{stage: "futurehouse:complete", status: :success}}
   end
 
   test "check_idea_futurehouse returns an explicit key error when FUTURE_HOUSE_API_KEY is absent",

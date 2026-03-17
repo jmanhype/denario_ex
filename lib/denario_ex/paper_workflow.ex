@@ -1,7 +1,7 @@
 defmodule DenarioEx.PaperWorkflow do
   @moduledoc false
 
-  alias DenarioEx.{AI, ArtifactRegistry, LLM, ReqLLMClient, Text, WorkflowPrompts}
+  alias DenarioEx.{AI, ArtifactRegistry, LLM, Progress, ReqLLMClient, Text, WorkflowPrompts}
 
   @asset_dir Path.expand("../../priv/latex", __DIR__)
 
@@ -29,6 +29,13 @@ defmodule DenarioEx.PaperWorkflow do
     preset = journal_preset(journal)
     plot_paths = available_plot_paths(session)
 
+    Progress.emit(opts, %{
+      kind: :started,
+      message: "Preparing paper assets and drafting the manuscript.",
+      progress: 8,
+      stage: "paper:start"
+    })
+
     with {:ok, llm} <- LLM.parse(Keyword.get(opts, :llm, "gemini-2.5-flash")),
          :ok <- File.mkdir_p(paper_dir),
          :ok <- copy_assets(preset.files, paper_dir),
@@ -49,6 +56,13 @@ defmodule DenarioEx.PaperWorkflow do
              llm,
              session.keys
            ),
+         :ok <-
+           Progress.emit(opts, %{
+             kind: :progress,
+             message: "Abstract and title drafted. Writing the introduction.",
+             progress: 20,
+             stage: "paper:introduction"
+           }),
          title = Text.fetch(abstract_object, "title") || "Untitled Paper",
          abstract = Text.fetch(abstract_object, "abstract") || "",
          {:ok, introduction} <-
@@ -61,6 +75,13 @@ defmodule DenarioEx.PaperWorkflow do
              section_context(session.research, title, abstract),
              citation_context
            ),
+         :ok <-
+           Progress.emit(opts, %{
+             kind: :progress,
+             message: "Introduction ready. Drafting methods.",
+             progress: 35,
+             stage: "paper:methods"
+           }),
          {:ok, methods} <-
            generate_section(
              client,
@@ -71,6 +92,13 @@ defmodule DenarioEx.PaperWorkflow do
              section_context(session.research, title, abstract),
              citation_context
            ),
+         :ok <-
+           Progress.emit(opts, %{
+             kind: :progress,
+             message: "Methods ready. Drafting results.",
+             progress: 50,
+             stage: "paper:results"
+           }),
          {:ok, results} <-
            generate_section(
              client,
@@ -81,6 +109,13 @@ defmodule DenarioEx.PaperWorkflow do
              section_context(session.research, title, abstract),
              citation_context
            ),
+         :ok <-
+           Progress.emit(opts, %{
+             kind: :progress,
+             message: "Results section ready. Integrating figures.",
+             progress: 65,
+             stage: "paper:figures"
+           }),
          {:ok, results} <-
            maybe_add_figures(
              plot_paths,
@@ -102,6 +137,13 @@ defmodule DenarioEx.PaperWorkflow do
              citation_context
            ),
          :ok <-
+           Progress.emit(opts, %{
+             kind: :progress,
+             message: "Conclusions ready. Writing bibliography and TeX.",
+             progress: 78,
+             stage: "paper:latex"
+           }),
+         :ok <-
            maybe_write_bibliography(paper_dir, add_citations, session.research.literature_sources),
          tex <-
            render_latex(
@@ -116,8 +158,23 @@ defmodule DenarioEx.PaperWorkflow do
              add_citations
            ),
          :ok <- File.write(tex_path, tex),
+         :ok <-
+           Progress.emit(opts, %{
+             kind: :progress,
+             message: compile_message(compile?),
+             progress: if(compile?, do: 88, else: 92),
+             stage: "paper:compile"
+           }),
          {:ok, compiled_pdf_path} <-
            maybe_compile(compile?, tex_name, pdf_path, paper_dir, add_citations) do
+      Progress.emit(opts, %{
+        kind: :finished,
+        status: :success,
+        message: "Paper workflow finished.",
+        progress: 95,
+        stage: "paper:complete"
+      })
+
       {:ok, %{tex_path: tex_path, pdf_path: compiled_pdf_path, keywords: keyword_state}}
     end
   end
@@ -420,6 +477,9 @@ defmodule DenarioEx.PaperWorkflow do
   defp normalize_journal(:pasj), do: :pasj
   defp normalize_journal("PASJ"), do: :pasj
   defp normalize_journal(_journal), do: :none
+
+  defp compile_message(true), do: "TeX written. Compiling the PDF."
+  defp compile_message(false), do: "TeX written. PDF compilation skipped."
 
   defp journal_preset(:aas) do
     %{

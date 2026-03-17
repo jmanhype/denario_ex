@@ -5,6 +5,7 @@ defmodule DenarioEx.ReviewWorkflow do
     AI,
     ArtifactRegistry,
     LLM,
+    Progress,
     ReqLLMClient,
     SystemPdfRasterizer,
     Text,
@@ -18,12 +19,34 @@ defmodule DenarioEx.ReviewWorkflow do
     referee_output_dir = ArtifactRegistry.referee_output_dir(session.project_dir)
     log_path = Path.join(referee_output_dir, "referee.log")
 
+    Progress.emit(opts, %{
+      kind: :started,
+      message: "Preparing the referee review request.",
+      progress: 10,
+      stage: "referee:start"
+    })
+
     with {:ok, llm} <- LLM.parse(Keyword.get(opts, :llm, "gemini-2.5-flash")),
          :ok <- File.mkdir_p(referee_output_dir),
          {:ok, request} <- build_request(session, referee_output_dir, rasterizer, opts),
+         :ok <-
+           Progress.emit(opts, %{
+             kind: :progress,
+             message: review_mode_message(request.mode),
+             progress: if(request.mode == :pdf, do: 45, else: 35),
+             stage: "referee:request_ready"
+           }),
          {:ok, review_text} <- run_review(client, request, llm, session.keys),
          {:ok, report} <- Text.extract_block_or_fallback(review_text, "REVIEW") do
       File.write!(log_path, render_log(request, report))
+
+      Progress.emit(opts, %{
+        kind: :finished,
+        status: :success,
+        message: "Referee review finished.",
+        progress: 92,
+        stage: "referee:complete"
+      })
 
       {:ok,
        %{
@@ -144,4 +167,7 @@ defmodule DenarioEx.ReviewWorkflow do
     #{report}
     """
   end
+
+  defp review_mode_message(:pdf), do: "PDF rasterized successfully. Running image-aware review."
+  defp review_mode_message(:text), do: "PDF review unavailable. Falling back to text-only review."
 end

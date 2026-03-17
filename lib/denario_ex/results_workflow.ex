@@ -5,6 +5,7 @@ defmodule DenarioEx.ResultsWorkflow do
     AI,
     CMBAgentLoop,
     LLM,
+    Progress,
     PythonExecutor,
     ReqLLMClient,
     Text,
@@ -40,6 +41,13 @@ defmodule DenarioEx.ResultsWorkflow do
       experiment_dir: experiment_dir
     }
 
+    Progress.emit(opts, %{
+      kind: :started,
+      message: "Planning the results workflow.",
+      progress: 8,
+      stage: "results:start"
+    })
+
     with {:ok, planner_llm} <- LLM.parse(Keyword.get(opts, :planner_model, "gpt-4o")),
          {:ok, reviewer_llm} <- LLM.parse(Keyword.get(opts, :plan_reviewer_model, "o3-mini")),
          {:ok, engineer_llm} <- LLM.parse(Keyword.get(opts, :engineer_model, "gpt-4.1")),
@@ -54,6 +62,13 @@ defmodule DenarioEx.ResultsWorkflow do
              allowed_agents: involved_agents,
              max_steps: max_n_steps
            ),
+         :ok <-
+           Progress.emit(opts, %{
+             kind: :progress,
+             message: "Execution plan ready with #{length(plan.steps)} steps.",
+             progress: 22,
+             stage: "results:plan_ready"
+           }),
          {:ok, step_outputs} <-
            run_steps(
              plan.steps,
@@ -66,14 +81,30 @@ defmodule DenarioEx.ResultsWorkflow do
              max_n_attempts,
              restart_at_step,
              hardware_constraints,
-             experiment_dir
+             experiment_dir,
+             opts
            ),
          final_prompt <- WorkflowPrompts.results_final_prompt(context, step_outputs),
+         :ok <-
+           Progress.emit(opts, %{
+             kind: :progress,
+             message: "Formatting the final results narrative.",
+             progress: 86,
+             stage: "results:finalize"
+           }),
          {:ok, final_text} <- AI.complete(client, final_prompt, formatter_llm, session.keys),
          {:ok, results_block} <- Text.extract_block(final_text, "RESULTS") do
       log_path = Path.join(experiment_dir, "step_logs.md")
       File.mkdir_p!(experiment_dir)
       File.write!(log_path, render_step_log(plan.steps, step_outputs))
+
+      Progress.emit(opts, %{
+        kind: :finished,
+        status: :success,
+        message: "Results workflow finished and plots were collected.",
+        progress: 94,
+        stage: "results:complete"
+      })
 
       {:ok,
        %{
@@ -97,7 +128,8 @@ defmodule DenarioEx.ResultsWorkflow do
          max_n_attempts,
          restart_at_step,
          hardware_constraints,
-         experiment_dir
+         experiment_dir,
+         opts
        ) do
     start_index = if restart_at_step < 0, do: 0, else: restart_at_step
 
@@ -107,6 +139,14 @@ defmodule DenarioEx.ResultsWorkflow do
       if index < start_index do
         {:cont, {:ok, outputs}}
       else
+        Progress.emit(opts, %{
+          kind: :progress,
+          message:
+            "Running results step #{index + 1} of #{length(steps)}: #{Text.fetch(step, "goal")}",
+          progress: step_progress(index, length(steps), 28, 78),
+          stage: "results:step_start"
+        })
+
         case run_single_step(
                step,
                context,
@@ -118,9 +158,17 @@ defmodule DenarioEx.ResultsWorkflow do
                researcher_llm,
                max_n_attempts,
                hardware_constraints,
-               experiment_dir
+               experiment_dir,
+               opts
              ) do
           {:ok, step_output} ->
+            Progress.emit(opts, %{
+              kind: :progress,
+              message: "Finished #{Text.fetch(step, "id")}: #{Text.fetch(step, "goal")}",
+              progress: step_progress(index + 1, length(steps), 30, 82),
+              stage: "results:step_complete"
+            })
+
             {:cont, {:ok, outputs ++ [step_output]}}
 
           {:error, reason} ->
@@ -141,7 +189,8 @@ defmodule DenarioEx.ResultsWorkflow do
          researcher_llm,
          max_n_attempts,
          hardware_constraints,
-         experiment_dir
+         experiment_dir,
+         opts
        ) do
     needs_code = truthy?(Text.fetch(step, "needs_code"))
     agent = Text.fetch(step, "agent")
@@ -160,7 +209,8 @@ defmodule DenarioEx.ResultsWorkflow do
           max_n_attempts,
           hardware_constraints,
           experiment_dir,
-          ""
+          "",
+          opts
         )
 
       true ->
@@ -193,8 +243,18 @@ defmodule DenarioEx.ResultsWorkflow do
          hardware_constraints,
          experiment_dir,
          previous_error,
+         opts,
          attempt \\ 1
        ) do
+    if attempt > 1 do
+      Progress.emit(opts, %{
+        kind: :progress,
+        message: "Retrying #{Text.fetch(step, "id")} after a failed execution attempt.",
+        progress: 50,
+        stage: "results:retry"
+      })
+    end
+
     prompt =
       WorkflowPrompts.results_engineer_prompt(
         step,
@@ -251,6 +311,7 @@ defmodule DenarioEx.ResultsWorkflow do
             hardware_constraints,
             experiment_dir,
             Text.fetch(execution, "output") || inspect(execution),
+            opts,
             attempt + 1
           )
 
@@ -297,4 +358,13 @@ defmodule DenarioEx.ResultsWorkflow do
 
   defp truthy?(value) when value in [true, "true", "TRUE", 1], do: true
   defp truthy?(_value), do: false
+
+  defp step_progress(_index, total, min_progress, max_progress) when total <= 0 do
+    max(min_progress, max_progress)
+  end
+
+  defp step_progress(index, total, min_progress, max_progress) do
+    span = max_progress - min_progress
+    min_progress + round(index / total * span)
+  end
 end

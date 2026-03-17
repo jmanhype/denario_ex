@@ -1,7 +1,7 @@
 defmodule DenarioExUIWeb.DashboardLive do
   use DenarioExUIWeb, :live_view
 
-  alias DenarioExUI.{PhaseRunner, Projects}
+  alias DenarioExUI.{PhaseEvents, PhaseRunner, Projects}
 
   @impl true
   def mount(_params, _session, socket) do
@@ -14,13 +14,21 @@ defmodule DenarioExUIWeb.DashboardLive do
      |> assign(:phase_specs, Projects.phase_specs(nil))
      |> assign(:settings, Projects.default_settings())
      |> assign(:activity, [])
-     |> assign(:running_phases, MapSet.new())}
+     |> assign(:running_phases, MapSet.new())
+     |> assign(:run_states, %{})
+     |> assign(:run_order, [])
+     |> assign(:selected_run_id, nil)
+     |> assign(:subscribed_project_dir, nil)}
   end
 
   @impl true
   def handle_params(params, _uri, socket) do
     project_dir = Map.get(params, "project_dir", "")
-    socket = assign(socket, :project_dir_input, project_dir)
+
+    socket =
+      socket
+      |> assign(:project_dir_input, project_dir)
+      |> maybe_subscribe(project_dir)
 
     case String.trim(project_dir) do
       "" ->
@@ -80,6 +88,47 @@ defmodule DenarioExUIWeb.DashboardLive do
     {:noreply, assign(socket, :settings, normalize_settings(settings))}
   end
 
+  def handle_event("select_run", %{"run_id" => run_id}, socket) do
+    {:noreply, assign(socket, :selected_run_id, run_id)}
+  end
+
+  def handle_event("cancel_run", %{"run_id" => run_id}, socket) do
+    case PhaseRunner.cancel(run_id) do
+      :ok ->
+        {:noreply, put_flash(socket, :info, "Run cancelled.")}
+
+      {:error, :unknown_run} ->
+        {:noreply, put_flash(socket, :error, "Run is no longer active.")}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, error_message(reason))}
+    end
+  end
+
+  def handle_event("retry_run", %{"run_id" => run_id}, socket) do
+    cond do
+      is_nil(socket.assigns.project) ->
+        {:noreply, put_flash(socket, :error, "Open a project before retrying a phase.")}
+
+      run = selected_run(socket.assigns.run_states, run_id) ->
+        case PhaseRunner.start(
+               self(),
+               socket.assigns.project.project_dir,
+               run.phase,
+               socket.assigns.settings
+             ) do
+          {:ok, new_run_id} ->
+            {:noreply, assign(socket, :selected_run_id, new_run_id)}
+
+          {:error, reason} ->
+            {:noreply, put_flash(socket, :error, error_message(reason))}
+        end
+
+      true ->
+        {:noreply, put_flash(socket, :error, "Could not find that run to retry.")}
+    end
+  end
+
   def handle_event("run_phase", %{"phase" => phase}, socket) do
     cond do
       is_nil(socket.assigns.project) ->
@@ -112,23 +161,38 @@ defmodule DenarioExUIWeb.DashboardLive do
     {:noreply, socket}
   end
 
+  def handle_info({:phase_event, event}, socket) do
+    {:noreply, apply_phase_event(socket, event)}
+  end
+
   def handle_info({:phase_finished, phase, {:ok, snapshot, message}}, socket) do
-    {:noreply,
-     socket
-     |> update(:running_phases, &MapSet.delete(&1, phase))
-     |> assign_project(snapshot)
-     |> note_activity(:success, message)
-     |> put_flash(:info, message)}
+    event = %{
+      run_id: PhaseEvents.new_run_id(),
+      phase: phase,
+      status: :success,
+      kind: :finished,
+      progress: 100,
+      message: message,
+      snapshot: snapshot
+    }
+
+    {:noreply, apply_phase_event(socket, event) |> put_flash(:info, message)}
   end
 
   def handle_info({:phase_finished, phase, {:error, reason}}, socket) do
     label = Projects.phase_label(phase)
+    message = "#{label} failed: #{error_message(reason)}"
 
-    {:noreply,
-     socket
-     |> update(:running_phases, &MapSet.delete(&1, phase))
-     |> note_activity(:error, "#{label} failed: #{error_message(reason)}")
-     |> put_flash(:error, "#{label} failed: #{error_message(reason)}")}
+    event = %{
+      run_id: PhaseEvents.new_run_id(),
+      phase: phase,
+      status: :error,
+      kind: :finished,
+      progress: 100,
+      message: message
+    }
+
+    {:noreply, apply_phase_event(socket, event) |> put_flash(:error, message)}
   end
 
   attr :snapshot, :map, required: true
@@ -362,6 +426,93 @@ defmodule DenarioExUIWeb.DashboardLive do
           </section>
 
           <section class="panel-shell">
+            <p class="eyebrow">Run Monitor</p>
+
+            <%= if @run_order == [] do %>
+              <p class="panel-copy mt-4">
+                No runs yet. Launch a phase to start streaming progress and log entries.
+              </p>
+            <% else %>
+              <div class="mt-4 space-y-3">
+                <button
+                  :for={run <- ordered_runs(@run_states, @run_order)}
+                  type="button"
+                  phx-click="select_run"
+                  phx-value-run_id={run.run_id}
+                  class={run_card_class(@selected_run_id == run.run_id)}
+                >
+                  <div class="flex items-start justify-between gap-4">
+                    <div class="min-w-0">
+                      <p class="text-sm font-semibold text-white">{run.phase_label}</p>
+                      <p class="tiny-copy mt-1">{run.message}</p>
+                    </div>
+                    <span class={run_status_class(run.status)}>{run.status}</span>
+                  </div>
+
+                  <div class="mt-3">
+                    <div class="run-progress">
+                      <span class="run-progress__fill" style={"width: #{run.progress}%"}></span>
+                    </div>
+                    <div class="mt-2 flex items-center justify-between gap-4">
+                      <span class="tiny-copy">{run.progress}%</span>
+                      <span class="tiny-copy">{run.at}</span>
+                    </div>
+                  </div>
+                </button>
+              </div>
+            <% end %>
+          </section>
+
+          <section class="panel-shell">
+            <p class="eyebrow">Live Log</p>
+
+            <%= if selected_run(@run_states, @selected_run_id) do %>
+              <% run = selected_run(@run_states, @selected_run_id) %>
+              <div class="mt-4 space-y-3">
+                <div class="flex items-center justify-between gap-4">
+                  <div class="state-row state-row--compact">
+                    <dt>Selected Run</dt>
+                    <dd class="state-value">{run.phase_label}</dd>
+                  </div>
+                  <div class="flex flex-wrap justify-end gap-2">
+                    <button
+                      :if={run.status == :running}
+                      type="button"
+                      phx-click="cancel_run"
+                      phx-value-run_id={run.run_id}
+                      class="action-button action-button--secondary"
+                    >
+                      Cancel Run
+                    </button>
+                    <button
+                      :if={run.status in [:success, :error, :cancelled]}
+                      type="button"
+                      phx-click="retry_run"
+                      phx-value-run_id={run.run_id}
+                      class="action-button action-button--primary"
+                    >
+                      Retry Run
+                    </button>
+                  </div>
+                </div>
+                <div class="log-shell">
+                  <div :for={entry <- run.logs} class="log-row">
+                    <span class={activity_tone_class(entry.status)}>{entry.kind}</span>
+                    <div class="min-w-0">
+                      <p class="text-sm text-white">{entry.message}</p>
+                      <p class="tiny-copy mt-1">{entry.at}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            <% else %>
+              <p class="panel-copy mt-4">
+                Choose a run to inspect its live log, or launch a phase to create one.
+              </p>
+            <% end %>
+          </section>
+
+          <section class="panel-shell">
             <p class="eyebrow">Activity</p>
 
             <%= if @activity == [] do %>
@@ -475,6 +626,10 @@ defmodule DenarioExUIWeb.DashboardLive do
     |> assign(:project, nil)
     |> assign(:artifact_values, blank_artifact_values())
     |> assign(:phase_specs, Projects.phase_specs(nil))
+    |> assign(:run_states, %{})
+    |> assign(:run_order, [])
+    |> assign(:selected_run_id, nil)
+    |> assign(:running_phases, MapSet.new())
   end
 
   defp assign_project(socket, snapshot) do
@@ -521,6 +676,205 @@ defmodule DenarioExUIWeb.DashboardLive do
   defp error_message(reason) when is_binary(reason), do: reason
   defp error_message(reason), do: inspect(reason)
 
+  defp maybe_subscribe(socket, project_dir) do
+    project_dir =
+      case String.trim(project_dir || "") do
+        "" -> nil
+        value -> Path.expand(value)
+      end
+
+    previous = socket.assigns.subscribed_project_dir
+
+    cond do
+      previous == project_dir ->
+        socket
+
+      previous && connected?(socket) ->
+        :ok = PhaseEvents.unsubscribe(previous)
+        subscribe_if_present(socket, project_dir)
+
+      true ->
+        subscribe_if_present(socket, project_dir)
+    end
+  end
+
+  defp subscribe_if_present(socket, nil), do: assign(socket, :subscribed_project_dir, nil)
+
+  defp subscribe_if_present(socket, project_dir) do
+    if connected?(socket) do
+      :ok = PhaseEvents.subscribe(project_dir)
+    end
+
+    assign(socket, :subscribed_project_dir, project_dir)
+  end
+
+  defp apply_phase_event(socket, event) do
+    event = normalize_phase_event(event)
+    existing = Map.get(socket.assigns.run_states, event.run_id)
+
+    case {existing, event.status} do
+      {%{status: :cancelled}, status} when status != :cancelled ->
+        socket
+
+      _ ->
+        run_state = merge_run_state(existing, event)
+
+        socket
+        |> assign(:run_states, Map.put(socket.assigns.run_states, event.run_id, run_state))
+        |> assign(:run_order, [
+          event.run_id | Enum.reject(socket.assigns.run_order, &(&1 == event.run_id))
+        ])
+        |> maybe_select_run(event)
+        |> update_running_phases(event)
+        |> maybe_assign_snapshot(event)
+        |> maybe_note_activity(event)
+    end
+  end
+
+  defp normalize_phase_event(event) do
+    %{
+      run_id: Map.get(event, :run_id) || Map.get(event, "run_id") || PhaseEvents.new_run_id(),
+      phase: Map.get(event, :phase) || Map.get(event, "phase") || "unknown",
+      status: Map.get(event, :status) || Map.get(event, "status") || :running,
+      kind: Map.get(event, :kind) || Map.get(event, "kind") || :progress,
+      progress: clamp_progress(Map.get(event, :progress) || Map.get(event, "progress") || 0),
+      message: Map.get(event, :message) || Map.get(event, "message") || "",
+      at: Map.get(event, :at) || Map.get(event, "at") || timestamp(),
+      snapshot: Map.get(event, :snapshot) || Map.get(event, "snapshot"),
+      stage: Map.get(event, :stage) || Map.get(event, "stage")
+    }
+    |> demote_intermediate_terminal_event()
+  end
+
+  defp merge_run_state(nil, event) do
+    %{
+      run_id: event.run_id,
+      phase: event.phase,
+      phase_label: Projects.phase_label(event.phase),
+      status: event.status,
+      progress: event.progress,
+      message: event.message,
+      at: event.at,
+      logs: [run_log_entry(event)]
+    }
+  end
+
+  defp merge_run_state(existing, event) do
+    %{
+      existing
+      | status: event.status,
+        progress: event.progress,
+        message: event.message,
+        at: event.at,
+        logs: append_log(existing.logs, run_log_entry(event))
+    }
+  end
+
+  defp run_log_entry(event) do
+    %{
+      kind: event.kind,
+      status: event.status,
+      message: event.message,
+      at: event.at
+    }
+  end
+
+  defp append_log(logs, entry) do
+    (logs ++ [entry])
+    |> Enum.take(-80)
+  end
+
+  defp maybe_select_run(socket, event) do
+    cond do
+      socket.assigns.selected_run_id in [nil, event.run_id] ->
+        assign(socket, :selected_run_id, event.run_id)
+
+      event.status == :running and event.kind == :started ->
+        assign(socket, :selected_run_id, event.run_id)
+
+      true ->
+        socket
+    end
+  end
+
+  defp maybe_assign_snapshot(socket, %{status: :success, snapshot: snapshot})
+       when is_map(snapshot) do
+    assign_project(socket, snapshot)
+  end
+
+  defp maybe_assign_snapshot(socket, _event), do: socket
+
+  defp maybe_note_activity(socket, %{status: :running}), do: socket
+
+  defp maybe_note_activity(socket, %{status: :success, message: message}) do
+    note_activity(socket, :success, message)
+  end
+
+  defp maybe_note_activity(socket, %{status: :cancelled, message: message}) do
+    note_activity(socket, :cancelled, message)
+  end
+
+  defp maybe_note_activity(socket, %{status: :error, message: message}) do
+    note_activity(socket, :error, message)
+  end
+
+  defp maybe_note_activity(socket, _event), do: socket
+
+  defp update_running_phases(socket, %{phase: phase, status: :running}) do
+    update(socket, :running_phases, &MapSet.put(&1, phase))
+  end
+
+  defp update_running_phases(socket, %{phase: phase, status: status})
+       when status in [:success, :error, :cancelled] do
+    update(socket, :running_phases, &MapSet.delete(&1, phase))
+  end
+
+  defp update_running_phases(socket, _event), do: socket
+
+  defp ordered_runs(run_states, run_order) do
+    Enum.map(run_order, &Map.get(run_states, &1))
+    |> Enum.reject(&is_nil/1)
+    |> Enum.take(6)
+  end
+
+  defp selected_run(run_states, selected_run_id), do: Map.get(run_states, selected_run_id)
+
+  defp clamp_progress(progress) when is_integer(progress), do: min(max(progress, 0), 100)
+
+  defp clamp_progress(progress) when is_float(progress),
+    do: progress |> round() |> clamp_progress()
+
+  defp clamp_progress(_progress), do: 0
+
+  defp demote_intermediate_terminal_event(
+         %{
+           phase: phase,
+           status: :success,
+           kind: :finished,
+           stage: stage
+         } = event
+       ) do
+    if canonical_terminal_stage?(phase, stage) do
+      event
+    else
+      %{event | status: :running, kind: :progress, progress: min(event.progress, 99)}
+    end
+  end
+
+  defp demote_intermediate_terminal_event(event), do: event
+
+  defp canonical_terminal_stage?(_phase, stage) when stage in [nil, ""], do: true
+
+  defp canonical_terminal_stage?(phase, stage) when is_binary(stage) do
+    String.starts_with?(stage, "#{phase}:")
+  end
+
+  defp timestamp do
+    NaiveDateTime.utc_now()
+    |> NaiveDateTime.truncate(:second)
+    |> to_string()
+  end
+
   defp artifact_badge_class(true), do: "state-pill state-pill--ready"
   defp artifact_badge_class(false), do: "state-pill state-pill--missing"
 
@@ -534,7 +888,16 @@ defmodule DenarioExUIWeb.DashboardLive do
     do: "phase-button"
 
   defp activity_tone_class(:success), do: "activity-pill activity-pill--success"
+  defp activity_tone_class(:cancelled), do: "activity-pill activity-pill--cancelled"
   defp activity_tone_class(:error), do: "activity-pill activity-pill--error"
   defp activity_tone_class(:saved), do: "activity-pill activity-pill--saved"
   defp activity_tone_class(_tone), do: "activity-pill activity-pill--running"
+
+  defp run_status_class(:success), do: "activity-pill activity-pill--success"
+  defp run_status_class(:cancelled), do: "activity-pill activity-pill--cancelled"
+  defp run_status_class(:error), do: "activity-pill activity-pill--error"
+  defp run_status_class(_status), do: "activity-pill activity-pill--running"
+
+  defp run_card_class(true), do: "run-card run-card--selected"
+  defp run_card_class(false), do: "run-card"
 end

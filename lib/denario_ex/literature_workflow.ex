@@ -1,7 +1,16 @@
 defmodule DenarioEx.LiteratureWorkflow do
   @moduledoc false
 
-  alias DenarioEx.{AI, LLM, OpenAlex, ReqLLMClient, SemanticScholar, Text, WorkflowPrompts}
+  alias DenarioEx.{
+    AI,
+    LLM,
+    OpenAlex,
+    Progress,
+    ReqLLMClient,
+    SemanticScholar,
+    Text,
+    WorkflowPrompts
+  }
 
   @decision_schema %{
     "type" => "object",
@@ -38,6 +47,13 @@ defmodule DenarioEx.LiteratureWorkflow do
       idea: session.research.idea
     }
 
+    Progress.emit(opts, %{
+      kind: :started,
+      message: "Evaluating novelty and searching the literature.",
+      progress: 10,
+      stage: "literature:start"
+    })
+
     with {:ok, llm} <- LLM.parse(Keyword.get(opts, :llm, "gemini-2.5-flash")),
          {:ok, state} <-
            iterate(
@@ -50,13 +66,29 @@ defmodule DenarioEx.LiteratureWorkflow do
              fallback_literature_client,
              llm,
              session.keys,
-             literature_log
+             literature_log,
+             opts
            ),
          summary_prompt <-
            WorkflowPrompts.literature_summary_prompt(context, state.decision, state.messages),
+         :ok <-
+           Progress.emit(opts, %{
+             kind: :progress,
+             message: "Summarizing literature findings.",
+             progress: 85,
+             stage: "literature:summary"
+           }),
          {:ok, summary_text} <- AI.complete(client, summary_prompt, llm, session.keys),
          {:ok, block} <- Text.extract_block_or_fallback(summary_text, "SUMMARY") do
       File.mkdir_p!(literature_dir)
+
+      Progress.emit(opts, %{
+        kind: :finished,
+        status: :success,
+        message: "Literature check finished with decision: #{state.decision}.",
+        progress: 92,
+        stage: "literature:complete"
+      })
 
       {:ok,
        %{
@@ -78,7 +110,8 @@ defmodule DenarioEx.LiteratureWorkflow do
          fallback_literature_client,
          llm,
          keys,
-         literature_log
+         literature_log,
+         opts
        ) do
     prompt =
       WorkflowPrompts.literature_decision_prompt(
@@ -97,6 +130,13 @@ defmodule DenarioEx.LiteratureWorkflow do
         state.messages <>
           "\nRound #{iteration}\nDecision: #{decision}\nReason: #{reason}\nQuery: #{query}\n"
 
+      Progress.emit(opts, %{
+        kind: :progress,
+        message: "Literature round #{iteration + 1}: model decision #{decision}.",
+        progress: 20 + iteration * 8,
+        stage: "literature:decision"
+      })
+
       cond do
         decision in ["novel", "not novel"] ->
           {:ok, %{state | messages: messages, decision: decision}}
@@ -105,6 +145,13 @@ defmodule DenarioEx.LiteratureWorkflow do
           {:ok, %{state | messages: messages, decision: "novel"}}
 
         true ->
+          Progress.emit(opts, %{
+            kind: :progress,
+            message: "Searching Semantic Scholar for: #{query}",
+            progress: 28 + iteration * 8,
+            stage: "literature:semantic_scholar"
+          })
+
           case semantic_scholar_client.search(query, keys, limit: 20) do
             {:ok, result} ->
               {papers_text, new_sources} =
@@ -129,7 +176,8 @@ defmodule DenarioEx.LiteratureWorkflow do
                 fallback_literature_client,
                 llm,
                 keys,
-                literature_log
+                literature_log,
+                opts
               )
 
             {:error, error} ->
@@ -146,7 +194,8 @@ defmodule DenarioEx.LiteratureWorkflow do
                 fallback_literature_client,
                 llm,
                 keys,
-                literature_log
+                literature_log,
+                opts
               )
           end
       end
@@ -386,12 +435,28 @@ defmodule DenarioEx.LiteratureWorkflow do
          fallback_literature_client,
          llm,
          keys,
-         literature_log
+         literature_log,
+         opts
        ) do
     primary_failure_note = search_failure_note(error)
 
+    Progress.emit(opts, %{
+      kind: :progress,
+      status: :running,
+      message: primary_failure_note,
+      progress: 40,
+      stage: "literature:fallback"
+    })
+
     case fallback_literature_client.search(query, keys, limit: 20) do
       {:ok, result} ->
+        Progress.emit(opts, %{
+          kind: :progress,
+          message: "Falling back to OpenAlex for: #{query}",
+          progress: 48,
+          stage: "literature:openalex"
+        })
+
         {papers_text, new_sources} =
           normalize_papers(result, context, query, client, llm, keys)
 
@@ -421,7 +486,8 @@ defmodule DenarioEx.LiteratureWorkflow do
           fallback_literature_client,
           llm,
           keys,
-          literature_log
+          literature_log,
+          opts
         )
 
       {:error, fallback_error} ->

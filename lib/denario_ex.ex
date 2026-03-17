@@ -17,6 +17,7 @@ defmodule DenarioEx do
     LLM,
     LiteratureWorkflow,
     PaperWorkflow,
+    Progress,
     PromptTemplates,
     ReqLLMClient,
     Research,
@@ -217,9 +218,24 @@ defmodule DenarioEx do
     iterations = Keyword.get(opts, :iterations, 4)
     client = Keyword.get(opts, :client, ReqLLMClient)
 
+    Progress.emit(opts, %{
+      kind: :started,
+      message: "Generating idea iterations.",
+      progress: 5,
+      stage: "idea:start"
+    })
+
     with {:ok, llm} <- LLM.parse(Keyword.get(opts, :llm, "gpt-4.1-mini")),
-         {:ok, final_idea} <- iterate_idea(session, client, llm, iterations, 0, "", ""),
+         {:ok, final_idea} <- iterate_idea(session, client, llm, iterations, 0, "", "", opts),
          {:ok, updated} <- set_idea(session, final_idea) do
+      Progress.emit(opts, %{
+        kind: :finished,
+        status: :success,
+        message: "Idea draft written to disk.",
+        progress: 95,
+        stage: "idea:complete"
+      })
+
       {:ok, updated}
     end
   end
@@ -257,6 +273,13 @@ defmodule DenarioEx do
   def get_method_fast(%__MODULE__{} = session, opts \\ []) do
     client = Keyword.get(opts, :client, ReqLLMClient)
 
+    Progress.emit(opts, %{
+      kind: :started,
+      message: "Generating methodology draft.",
+      progress: 10,
+      stage: "method:start"
+    })
+
     with {:ok, llm} <- LLM.parse(Keyword.get(opts, :llm, "gpt-4.1-mini")),
          :ok <- ensure_present(session.research.data_description, :data_description),
          :ok <- ensure_present(session.research.idea, :idea),
@@ -269,6 +292,14 @@ defmodule DenarioEx do
          {:ok, methods} <- Text.extract_block(raw_text, "METHODS"),
          cleaned <- Text.clean_section(methods, "METHODS"),
          {:ok, updated} <- set_method(session, cleaned) do
+      Progress.emit(opts, %{
+        kind: :finished,
+        status: :success,
+        message: "Methodology draft written to disk.",
+        progress: 95,
+        stage: "method:complete"
+      })
+
       {:ok, updated}
     end
   end
@@ -397,7 +428,8 @@ defmodule DenarioEx do
          total_iterations,
          current_iteration,
          previous_ideas,
-         _criticism
+         _criticism,
+         _opts
        )
        when current_iteration >= total_iterations do
     last_idea =
@@ -419,8 +451,16 @@ defmodule DenarioEx do
          total_iterations,
          current_iteration,
          previous_ideas,
-         criticism
+         criticism,
+         opts
        ) do
+    Progress.emit(opts, %{
+      kind: :progress,
+      message: "Running idea iteration #{current_iteration + 1} of #{total_iterations}.",
+      progress: iteration_progress(current_iteration, total_iterations),
+      stage: "idea:iteration"
+    })
+
     prompt =
       PromptTemplates.idea_maker_prompt(
         session.research.data_description,
@@ -456,11 +496,18 @@ defmodule DenarioEx do
             total_iterations,
             current_iteration + 1,
             updated_previous_ideas,
-            Text.clean_section(criticism, "CRITIC")
+            Text.clean_section(criticism, "CRITIC"),
+            opts
           )
         end
       end
     end
+  end
+
+  defp iteration_progress(_current_iteration, total_iterations) when total_iterations <= 0, do: 10
+
+  defp iteration_progress(current_iteration, total_iterations) do
+    10 + round((current_iteration + 1) / total_iterations * 70)
   end
 
   defp complete(client, prompt, %LLM{} = llm, %KeyManager{} = keys) do

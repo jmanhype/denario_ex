@@ -1,16 +1,31 @@
 defmodule DenarioEx.FutureHouseWorkflow do
   @moduledoc false
 
-  alias DenarioEx.{FutureHouse, KeyManager, WorkflowPrompts}
+  alias DenarioEx.{FutureHouse, KeyManager, Progress, WorkflowPrompts}
 
   @spec run(DenarioEx.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def run(session, opts \\ []) do
     client = Keyword.get(opts, :future_house_client, FutureHouse)
 
+    Progress.emit(opts, %{
+      kind: :started,
+      message: "Submitting the idea to FutureHouse / Edison.",
+      progress: 10,
+      stage: "futurehouse:start"
+    })
+
     with %KeyManager{future_house: api_key} when is_binary(api_key) and api_key != "" <-
            session.keys,
          prompt <- WorkflowPrompts.futurehouse_prompt(session.research.idea),
          {:ok, response} <- client.run_owl_review(prompt, session.keys, opts) do
+      Progress.emit(opts, %{
+        kind: :finished,
+        status: :success,
+        message: "FutureHouse precedent search finished.",
+        progress: 90,
+        stage: "futurehouse:complete"
+      })
+
       {:ok,
        %{
          literature: normalize_literature(fetch_formatted_answer(response)),

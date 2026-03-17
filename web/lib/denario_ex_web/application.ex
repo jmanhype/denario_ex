@@ -11,6 +11,7 @@ defmodule DenarioExUI.Application do
       DenarioExUIWeb.Telemetry,
       {DNSCluster, query: Application.get_env(:denario_ex_web, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: DenarioExUI.PubSub},
+      DenarioExUI.PhaseRuns,
       {Task.Supervisor, name: DenarioExUI.TaskSupervisor},
       DenarioExUIWeb.Endpoint
     ]
