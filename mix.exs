@@ -4,7 +4,7 @@ defmodule DenarioEx.MixProject do
   def project do
     [
       app: :denario_ex,
-      version: "0.1.4",
+      version: "0.2.0",
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
       escript: [main_module: DenarioEx.CLI],
