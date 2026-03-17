@@ -179,8 +179,8 @@ Semantic Scholar key is present or the public endpoint is rate-limited.
 GitHub releases are cut from tags:
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.2.1
+git push origin v0.2.1
 ```
 
 The release workflow runs the test suite and publishes a GitHub release with
