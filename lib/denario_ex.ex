@@ -470,9 +470,7 @@ defmodule DenarioEx do
       )
 
     with {:ok, maker_text} <- complete(client, prompt, llm, session.keys),
-         {:ok, idea} <- Text.extract_block(maker_text, "IDEA") do
-      cleaned_idea = Text.clean_section(idea, "IDEA")
-
+         {:ok, cleaned_idea} <- Text.extract_block_or_fallback(maker_text, "IDEA") do
       updated_previous_ideas =
         previous_ideas <>
           "\n\nIteration #{current_iteration}:\nIdea: #{cleaned_idea}\n"
@@ -488,7 +486,7 @@ defmodule DenarioEx do
           )
 
         with {:ok, critic_text} <- complete(client, critic_prompt, llm, session.keys),
-             {:ok, criticism} <- Text.extract_block(critic_text, "CRITIC") do
+             {:ok, criticism} <- Text.extract_block_or_fallback(critic_text, "CRITIC") do
           iterate_idea(
             session,
             client,
@@ -496,7 +494,7 @@ defmodule DenarioEx do
             total_iterations,
             current_iteration + 1,
             updated_previous_ideas,
-            Text.clean_section(criticism, "CRITIC"),
+            criticism,
             opts
           )
         end

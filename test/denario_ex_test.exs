@@ -36,6 +36,33 @@ defmodule DenarioExTest do
     end
   end
 
+  defmodule RawCriticClient do
+    @behaviour DenarioEx.LLMClient
+
+    @impl true
+    def complete([%{role: "user", content: prompt}], _opts) do
+      cond do
+        String.contains?(prompt, "Current idea:") ->
+          {:ok, "Make the idea more concrete, measurable, and operationally testable."}
+
+        String.contains?(prompt, "Iteration 1") ->
+          {:ok,
+           "\\begin{IDEA}A concrete sensor robustness study with measurable outcomes.\\end{IDEA}"}
+
+        String.contains?(prompt, "Iteration 0") ->
+          {:ok, "\\begin{IDEA}A broad sensor-analysis idea.\\end{IDEA}"}
+
+        true ->
+          {:error, {:unexpected_prompt, prompt}}
+      end
+    end
+
+    @impl true
+    def generate_object(_messages, _schema, _opts) do
+      {:error, :not_used_in_this_test}
+    end
+  end
+
   setup do
     project_dir = Path.join(System.tmp_dir!(), "denario_ex_#{System.unique_integer([:positive])}")
     on_exit(fn -> File.rm_rf(project_dir) end)
@@ -105,5 +132,28 @@ defmodule DenarioExTest do
 
     assert File.read!(Path.join(project_dir, "input_files/methods.md")) ==
              denario.research.methodology
+  end
+
+  test "get_idea_fast accepts raw critic feedback when block markers are missing", %{
+    project_dir: project_dir
+  } do
+    assert {:ok, denario} = DenarioEx.new(project_dir: project_dir, clear_project_dir: true)
+
+    assert {:ok, denario} =
+             DenarioEx.set_data_description(
+               denario,
+               "Analyze a small hypothetical lab sensor dataset and propose one paper idea."
+             )
+
+    assert {:ok, denario} =
+             DenarioEx.get_idea_fast(
+               denario,
+               client: RawCriticClient,
+               llm: "gpt-4.1-mini",
+               iterations: 2
+             )
+
+    assert denario.research.idea == "A concrete sensor robustness study with measurable outcomes."
+    assert File.read!(Path.join(project_dir, "input_files/idea.md")) == denario.research.idea
   end
 end

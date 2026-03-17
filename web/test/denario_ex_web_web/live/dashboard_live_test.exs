@@ -9,9 +9,9 @@ defmodule DenarioExUIWeb.DashboardLiveTest do
   test "root route renders the dashboard shell", %{conn: conn} do
     {:ok, _view, html} = live(conn, ~p"/")
 
-    assert html =~ "Denario Ex Control Room"
+    assert html =~ "A research cockpit that tells you what to do next."
     assert html =~ "Open Or Create Project"
-    assert html =~ "Project State"
+    assert html =~ "Workflow Rail"
   end
 
   test "project_dir query loads persisted project artifacts", %{conn: conn} do
@@ -30,12 +30,24 @@ defmodule DenarioExUIWeb.DashboardLiveTest do
     {:ok, _denario} =
       DenarioEx.set_method(denario, "Temporal residual scoring with interpretable features.")
 
-    {:ok, _view, html} = live(conn, ~p"/?project_dir=#{project_dir}")
+    {:ok, view, html} = live(conn, ~p"/?project_dir=#{project_dir}")
 
-    assert html =~ "Urban microclimate sensor dataset."
-    assert html =~ "Interpret calibration drift while detecting anomalies."
-    assert html =~ "Temporal residual scoring with interpretable features."
     assert html =~ project_dir
+    assert html =~ "Generate Results"
+
+    html =
+      view
+      |> element(~s(button[phx-value-artifact="idea"]))
+      |> render_click()
+
+    assert html =~ "Interpret calibration drift while detecting anomalies."
+
+    html =
+      view
+      |> element(~s(button[phx-value-artifact="methodology"]))
+      |> render_click()
+
+    assert html =~ "Temporal residual scoring with interpretable features."
   end
 
   test "phase events update the run monitor and live log", %{conn: conn} do
@@ -91,10 +103,16 @@ defmodule DenarioExUIWeb.DashboardLiveTest do
 
     html = render(view)
 
-    assert html =~ "Detect thermal drift before subsystem failure."
     assert html =~ "Idea generated."
     assert html =~ "100%"
     assert html =~ "Retry Run"
+
+    html =
+      view
+      |> element(~s(button[phx-value-artifact="idea"]))
+      |> render_click()
+
+    assert html =~ "Detect thermal drift before subsystem failure."
   end
 
   test "cancelled runs show retry controls and preserve the cancellation state", %{conn: conn} do
