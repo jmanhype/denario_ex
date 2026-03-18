@@ -53,7 +53,7 @@ Working estimate:
 
 | Python surface | Elixir status | Notes |
 | --- | --- | --- |
-| `denario run` Streamlit app | ported with differences | The standalone repo now has a Phoenix LiveView control room under `web/`, but it is not a literal Streamlit port. |
+| `denario run` Streamlit app | ported with differences | The standalone repo now has a Phoenix LiveView research workspace under `web/`, but it is not a literal Streamlit port. |
 | standalone CLI | ported with differences | Elixir provides `denario_ex research-pilot` and `denario_ex offline-demo` escript commands. |
 | offline reproducible demo | ported | `mix run examples/offline_demo.exs` and `./denario_ex offline-demo` both work. |
 
@@ -73,6 +73,6 @@ These are intentional differences, not parity bugs:
 
 If stricter parity is needed, the next features to port are:
 
-1. finish the browser UI beyond the current LiveView control room
+1. keep extending the browser UI beyond the current LiveView workspace
 2. any notebook-specific display behavior you still care about
 3. deeper behavioral matching for Python `preprocess_task`, if exact preprocessing parity becomes important

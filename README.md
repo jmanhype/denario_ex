@@ -10,7 +10,7 @@ paper generation.
 It is built around `ReqLLM` and `LLMDB`, keeps project artifacts on disk, and
 can run either as a real OpenAI-backed workflow or as a fully offline demo.
 It now also includes a separate Phoenix LiveView shell under `web/` for a
-browser-based control room on top of the same core library.
+browser-based research workspace on top of the same core library.
 
 ## What It Covers
 
@@ -66,13 +66,23 @@ mix phx.server
 
 Then open [http://localhost:4000](http://localhost:4000).
 
-Current UI slice:
+Current workspace model:
 
-- open or create a Denario project directory
-- edit persisted artifacts in place
-- launch workflow phases from the browser
-- review live activity/status
-- open generated plots, TeX, PDF, and referee logs
+- `/` is the research workspace home: project status, workflow progress, next step, and trust state
+- `/artifacts` is the artifact workspace: edit saved brief, idea, method, results, literature, and referee files with provenance
+- `/runs` is the run workspace: launch settings, current activity, retry controls, and run history
+- `/outputs` is the output workspace: plots, TeX, PDF, and critique logs with provenance
+- `/review` is the review workspace: literature, referee notes, evidence gates, and human checkpoints
+
+The web layer uses a shared workspace-state adapter so each phase is rendered
+with the same status vocabulary: `missing`, `ready`, `running`, `blocked`,
+`review_needed`, and `done`.
+
+Trust model:
+
+- generated artifacts are drafts, not final claims
+- paper and referee flows surface evidence gates in plain language
+- provider and configuration problems are shown as launch blockers with explicit recovery guidance
 
 Architecture notes live in [docs/architecture/liveview-ui.md](docs/architecture/liveview-ui.md).
 
@@ -194,7 +204,7 @@ Short version:
 
 - core research workflow: effectively ported
 - compatibility surface: mostly ported, with a few Python-only branches still missing
-- Phoenix LiveView control room: initial slice shipped in `web/`
+- Phoenix LiveView research workspace: initial multi-page slice shipped in `web/`
 - Python Streamlit app: not ported literally
 
 ## Temporary `req_llm` Pin
