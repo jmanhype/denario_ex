@@ -143,23 +143,77 @@ defmodule DenarioEx.ReqLLMClient do
   end
 
   defp extract_json_from_text(text) do
-    # Try to find a JSON object in the text (possibly wrapped in ```json blocks)
+    # Strip markdown code fences, thinking tags, and other wrapper noise
     cleaned =
       text
-      |> String.replace(~r/```json\s*/, "")
-      |> String.replace(~r/```\s*$/, "")
+      |> String.replace(~r/```json\s*/s, "")
+      |> String.replace(~r/```\s*/s, "")
+      |> String.replace(~r/<\/?think>/s, "")
       |> String.trim()
 
-    # Find the first { and last } to extract JSON object
-    case Regex.run(~r/\{[\s\S]*\}/s, cleaned) do
-      [json_str] ->
+    # Find balanced JSON: walk from first { tracking depth (respecting strings)
+    case find_balanced_json(cleaned) do
+      {:ok, json_str} ->
         case Jason.decode(json_str) do
           {:ok, object} when is_map(object) -> {:ok, object}
           _ -> {:error, :json_parse_failed}
         end
 
-      _ ->
+      :error ->
         {:error, :no_json_in_text}
+    end
+  end
+
+  defp find_balanced_json(text) do
+    graphemes = String.graphemes(text)
+
+    case Enum.find_index(graphemes, &(&1 == "{")) do
+      nil ->
+        :error
+
+      start_idx ->
+        rest = Enum.drop(graphemes, start_idx)
+        case walk_json(rest, 0, false, false, []) do
+          {:ok, chars} -> {:ok, Enum.join(chars)}
+          :error -> :error
+        end
+    end
+  end
+
+  defp walk_json([], _depth, _in_str, _esc, _acc), do: :error
+
+  defp walk_json([char | rest], depth, in_str, escaped, acc) do
+    acc = acc ++ [char]
+
+    cond do
+      # Inside string: handle escapes
+      in_str and escaped ->
+        walk_json(rest, depth, true, false, acc)
+
+      in_str and char == "\\" ->
+        walk_json(rest, depth, true, true, acc)
+
+      in_str and char == "\"" ->
+        walk_json(rest, depth, false, false, acc)
+
+      in_str ->
+        walk_json(rest, depth, true, false, acc)
+
+      # Outside string
+      char == "\"" ->
+        walk_json(rest, depth, true, false, acc)
+
+      char == "{" ->
+        walk_json(rest, depth + 1, false, false, acc)
+
+      char == "}" and depth == 1 ->
+        {:ok, acc}
+
+      char == "}" ->
+        walk_json(rest, depth - 1, false, false, acc)
+
+      true ->
+        walk_json(rest, depth, false, false, acc)
     end
   end
 
