@@ -71,8 +71,13 @@ defmodule DenarioEx.ReqLLMClient do
         case Response.text(response) do
           text when is_binary(text) and text != "" ->
             case extract_json_from_text(text) do
-              {:ok, object} when is_map(object) -> {:ok, object}
-              _ -> {:error, {:json_fallback_failed, text}}
+              {:ok, object} when is_map(object) ->
+                {:ok, object}
+
+              _ ->
+                # Last resort: try to build object from text patterns
+                # (handles engineer responses where code is too large for JSON)
+                extract_object_from_text_patterns(text, schema)
             end
 
           _ ->
@@ -82,6 +87,48 @@ defmodule DenarioEx.ReqLLMClient do
       {:error, error} ->
         {:error, error}
     end
+  end
+
+  defp extract_object_from_text_patterns(text, schema) do
+    required = Map.get(schema, "required", [])
+    properties = Map.get(schema, "properties", %{})
+
+    # Try to extract each required field from the text
+    object =
+      Enum.reduce(properties, %{}, fn {key, _spec}, acc ->
+        value = extract_field_from_text(text, key)
+        if value, do: Map.put(acc, key, value), else: acc
+      end)
+
+    if Enum.all?(required, &Map.has_key?(object, &1)) do
+      {:ok, object}
+    else
+      {:error, {:json_fallback_failed, String.slice(text, 0, 500)}}
+    end
+  end
+
+  defp extract_field_from_text(text, "code") do
+    # Extract code from ```python blocks or ```blocks
+    case Regex.run(~r/```(?:python)?\s*\n([\s\S]*?)```/s, text) do
+      [_, code] -> String.trim(code)
+      _ -> nil
+    end
+  end
+
+  defp extract_field_from_text(text, field) do
+    # Try to find "field": "value" or **field:** value patterns
+    patterns = [
+      ~r/"#{Regex.escape(field)}"\s*:\s*"([^"]*(?:\\.[^"]*)*)"/s,
+      ~r/\*\*#{Regex.escape(field)}\*\*[:\s]+(.+?)(?:\n\n|\n\*\*|$)/s,
+      ~r/#{Regex.escape(field)}[:\s]+(.+?)(?:\n\n|\n#{Regex.escape(field)}|$)/si
+    ]
+
+    Enum.find_value(patterns, fn pattern ->
+      case Regex.run(pattern, text) do
+        [_, value] -> String.trim(value)
+        _ -> nil
+      end
+    end)
   end
 
   @doc false
