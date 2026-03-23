@@ -59,11 +59,22 @@ defmodule DenarioEx.ReviewWorkflow do
   end
 
   defp build_request(session, referee_output_dir, rasterizer, opts) do
+    default_pdf_path = ArtifactRegistry.path(session.project_dir, :paper_pdf)
+    default_tex_path = ArtifactRegistry.path(session.project_dir, :paper_tex)
+
     pdf_path =
-      Keyword.get(opts, :paper_pdf, ArtifactRegistry.path(session.project_dir, :paper_pdf))
+      resolve_artifact_path(
+        Keyword.get(opts, :paper_pdf),
+        session.research.paper_pdf_path,
+        default_pdf_path
+      )
 
     tex_path =
-      Keyword.get(opts, :paper_tex, ArtifactRegistry.path(session.project_dir, :paper_tex))
+      resolve_artifact_path(
+        Keyword.get(opts, :paper_tex),
+        session.research.paper_tex_path,
+        default_tex_path
+      )
 
     paper_source = source_text(session, tex_path)
 
@@ -170,4 +181,25 @@ defmodule DenarioEx.ReviewWorkflow do
 
   defp review_mode_message(:pdf), do: "PDF rasterized successfully. Running image-aware review."
   defp review_mode_message(:text), do: "PDF review unavailable. Falling back to text-only review."
+
+  defp resolve_artifact_path(override_path, _session_path, _default_path)
+       when is_binary(override_path) and override_path != "" do
+    override_path
+  end
+
+  defp resolve_artifact_path(_override_path, session_path, default_path) do
+    cond do
+      is_binary(session_path) and File.regular?(session_path) ->
+        session_path
+
+      File.regular?(default_path) ->
+        default_path
+
+      is_binary(session_path) and session_path != "" ->
+        session_path
+
+      true ->
+        default_path
+    end
+  end
 end

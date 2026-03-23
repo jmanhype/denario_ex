@@ -7,6 +7,7 @@ defmodule DenarioEx.ArtifactRegistry do
   @plots_folder "plots"
   @paper_folder "paper"
   @referee_output "referee_output"
+  @plot_extensions ~w(png jpg jpeg pdf svg)
 
   @text_artifacts %{
     data_description: {"input_files", "data_description.md"},
@@ -19,6 +20,7 @@ defmodule DenarioEx.ArtifactRegistry do
 
   @path_artifacts %{
     keywords: {"input_files", "keywords.json"},
+    literature_sources: {"input_files", "literature_sources.json"},
     paper_tex: {"paper", "paper_v4_final.tex"},
     paper_pdf: {"paper", "paper_v4_final.pdf"}
   }
@@ -28,6 +30,13 @@ defmodule DenarioEx.ArtifactRegistry do
 
   @spec plots_dir(String.t()) :: String.t()
   def plots_dir(project_dir), do: Path.join(input_files_dir(project_dir), @plots_folder)
+
+  @spec plot_paths(String.t()) :: [String.t()]
+  def plot_paths(project_dir) do
+    Enum.flat_map(@plot_extensions, fn ext ->
+      Path.wildcard(Path.join(plots_dir(project_dir), "*.#{ext}"))
+    end)
+  end
 
   @spec paper_dir(String.t()) :: String.t()
   def paper_dir(project_dir), do: Path.join(project_dir, @paper_folder)
@@ -74,23 +83,57 @@ defmodule DenarioEx.ArtifactRegistry do
     :ok
   end
 
+  @spec persist_literature_sources(String.t(), [map()]) :: :ok
+  def persist_literature_sources(project_dir, sources) when is_list(sources) do
+    destination = path(project_dir, :literature_sources)
+    File.mkdir_p!(Path.dirname(destination))
+    File.write!(destination, Jason.encode!(%{"sources" => sources}, pretty: true))
+    :ok
+  end
+
   @spec load_keywords(String.t()) :: map() | list() | nil
   def load_keywords(project_dir) do
     keyword_path = path(project_dir, :keywords)
 
     if File.regular?(keyword_path) do
-      case Jason.decode!(File.read!(keyword_path)) do
-        %{"keywords" => keywords} when is_map(keywords) or is_list(keywords) -> keywords
-        keywords when is_map(keywords) or is_list(keywords) -> keywords
-        _other -> nil
+      case decode_json_file(keyword_path) do
+        {:ok, %{"keywords" => keywords}} when is_map(keywords) or is_list(keywords) ->
+          keywords
+
+        {:ok, keywords} when is_map(keywords) or is_list(keywords) ->
+          keywords
+
+        _other ->
+          nil
       end
     else
       nil
     end
   end
 
+  @spec load_literature_sources(String.t()) :: [map()]
+  def load_literature_sources(project_dir) do
+    sources_path = path(project_dir, :literature_sources)
+
+    if File.regular?(sources_path) do
+      case decode_json_file(sources_path) do
+        {:ok, %{"sources" => sources}} when is_list(sources) ->
+          Enum.filter(sources, &is_map/1)
+
+        {:ok, sources} when is_list(sources) ->
+          Enum.filter(sources, &is_map/1)
+
+        _other ->
+          []
+      end
+    else
+      []
+    end
+  end
+
   @spec load_research(String.t(), Research.t()) :: Research.t()
-  def load_research(project_dir, %Research{} = research) do
+  def load_research(project_dir, %Research{} = _research) do
+    research = %Research{}
     ensure_project_dirs(project_dir)
 
     research
@@ -101,7 +144,8 @@ defmodule DenarioEx.ArtifactRegistry do
     |> maybe_load_text(project_dir, :literature, :literature)
     |> maybe_load_text(project_dir, :referee_report, :referee_report)
     |> maybe_load_keywords(project_dir)
-    |> Map.put(:plot_paths, Path.wildcard(Path.join(plots_dir(project_dir), "*.png")))
+    |> Map.put(:literature_sources, load_literature_sources(project_dir))
+    |> Map.put(:plot_paths, plot_paths(project_dir))
     |> maybe_set_path(path(project_dir, :paper_tex), :paper_tex_path)
     |> maybe_set_path(path(project_dir, :paper_pdf), :paper_pdf_path)
   end
@@ -130,7 +174,7 @@ defmodule DenarioEx.ArtifactRegistry do
     if File.regular?(file_path) do
       Map.put(research, field, file_path)
     else
-      research
+      Map.put(research, field, nil)
     end
   end
 
@@ -143,4 +187,13 @@ defmodule DenarioEx.ArtifactRegistry do
   defp normalize_kw_type(kw_type) when is_atom(kw_type), do: Atom.to_string(kw_type)
   defp normalize_kw_type(kw_type) when is_binary(kw_type), do: kw_type
   defp normalize_kw_type(_kw_type), do: "unknown"
+
+  defp decode_json_file(path) do
+    with {:ok, body} <- File.read(path),
+         {:ok, decoded} <- Jason.decode(body) do
+      {:ok, decoded}
+    else
+      _ -> :error
+    end
+  end
 end

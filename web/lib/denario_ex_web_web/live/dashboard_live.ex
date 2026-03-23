@@ -23,6 +23,7 @@ defmodule DenarioExUIWeb.DashboardLive do
 
   @artifact_keys Enum.map(Projects.editable_sections(), & &1.key)
   @default_artifact_key hd(@artifact_keys)
+  @research_pilot_subphases ["get_idea", "get_method", "get_results", "check_idea", "get_paper"]
 
   @impl true
   def mount(_params, _session, socket) do
@@ -142,7 +143,6 @@ defmodule DenarioExUIWeb.DashboardLive do
 
       run = selected_run(socket.assigns.run_states, run_id) ->
         case PhaseRunner.start(
-               self(),
                socket.assigns.project.project_dir,
                run.phase,
                socket.assigns.settings
@@ -168,16 +168,12 @@ defmodule DenarioExUIWeb.DashboardLive do
         {:noreply, socket}
 
       true ->
-        case PhaseRunner.start(
-               self(),
-               socket.assigns.project.project_dir,
-               phase,
-               socket.assigns.settings
-             ) do
-          {:ok, _pid} ->
+        case PhaseRunner.start(socket.assigns.project.project_dir, phase, socket.assigns.settings) do
+          {:ok, run_id} ->
             {:noreply,
              socket
              |> update(:running_phases, &MapSet.put(&1, phase))
+             |> assign(:selected_run_id, run_id)
              |> note_activity(:running, "#{Projects.phase_label(phase)} started.")}
 
           {:error, reason} ->
@@ -187,42 +183,8 @@ defmodule DenarioExUIWeb.DashboardLive do
   end
 
   @impl true
-  def handle_info({:phase_started, _phase}, socket) do
-    {:noreply, socket}
-  end
-
   def handle_info({:phase_event, event}, socket) do
     {:noreply, apply_phase_event(socket, event)}
-  end
-
-  def handle_info({:phase_finished, phase, {:ok, snapshot, message}}, socket) do
-    event = %{
-      run_id: PhaseEvents.new_run_id(),
-      phase: phase,
-      status: :success,
-      kind: :finished,
-      progress: 100,
-      message: message,
-      snapshot: snapshot
-    }
-
-    {:noreply, apply_phase_event(socket, event) |> put_flash(:info, message)}
-  end
-
-  def handle_info({:phase_finished, phase, {:error, reason}}, socket) do
-    label = Projects.phase_label(phase)
-    message = "#{label} failed: #{error_message(reason)}"
-
-    event = %{
-      run_id: PhaseEvents.new_run_id(),
-      phase: phase,
-      status: :error,
-      kind: :finished,
-      progress: 100,
-      message: message
-    }
-
-    {:noreply, apply_phase_event(socket, event) |> put_flash(:error, message)}
   end
 
   attr :snapshot, :map, required: true
@@ -306,7 +268,7 @@ defmodule DenarioExUIWeb.DashboardLive do
     ~H"""
     <% current_run = current_run(@run_states, @selected_run_id, @run_order) %>
     <% next_action = next_action(@project, @phase_specs, @running_phases) %>
-    <% active_section = active_section(@active_artifact_key) %>
+    <% active_section = if @project, do: active_section(@active_artifact_key), else: nil %>
     <% completion = project_completion(@project) %>
     <div class="control-shell">
       <.flash_group flash={@flash} />
@@ -359,10 +321,23 @@ defmodule DenarioExUIWeb.DashboardLive do
                   </button>
 
                   <button
+                    :if={next_action.kind == :artifact}
+                    type="button"
+                    phx-click="select_artifact"
+                    phx-value-artifact={next_action.key}
+                    class="action-button action-button--primary"
+                  >
+                    {next_action.cta}
+                  </button>
+
+                  <button
                     type="button"
                     phx-click="run_phase"
                     phx-value-phase="research_pilot"
-                    disabled={MapSet.member?(@running_phases, "research_pilot") or !phase_ready?(@phase_specs, "research_pilot")}
+                    disabled={
+                      MapSet.member?(@running_phases, "research_pilot") or
+                        !phase_ready?(@phase_specs, "research_pilot")
+                    }
                     class="action-button action-button--ghost"
                   >
                     Run Full Workflow
@@ -381,7 +356,9 @@ defmodule DenarioExUIWeb.DashboardLive do
                 </div>
                 <div class="hero-empty-card">
                   <p class="field-label">3. Refine The Paper</p>
-                  <p>Edit the active artifact, inspect outputs, then iterate until the paper is clean.</p>
+                  <p>
+                    Edit the active artifact, inspect outputs, then iterate until the paper is clean.
+                  </p>
                 </div>
               </div>
             <% end %>
@@ -439,7 +416,8 @@ defmodule DenarioExUIWeb.DashboardLive do
                       <span
                         class="run-progress__fill"
                         style={"width: #{current_run.progress}%"}
-                      ></span>
+                      >
+                      </span>
                     </div>
                     <div class="mt-2 flex items-center justify-between gap-4">
                       <span class="tiny-copy">{current_run.progress}%</span>
@@ -528,7 +506,10 @@ defmodule DenarioExUIWeb.DashboardLive do
                 type="button"
                 phx-click="run_phase"
                 phx-value-phase="research_pilot"
-                disabled={MapSet.member?(@running_phases, "research_pilot") or !phase_ready?(@phase_specs, "research_pilot")}
+                disabled={
+                  MapSet.member?(@running_phases, "research_pilot") or
+                    !phase_ready?(@phase_specs, "research_pilot")
+                }
                 class="action-button action-button--ghost"
               >
                 Full Workflow
@@ -589,7 +570,8 @@ defmodule DenarioExUIWeb.DashboardLive do
                   <span
                     class="run-progress__fill"
                     style={"width: #{current_run.progress}%"}
-                  ></span>
+                  >
+                  </span>
                 </div>
 
                 <div class="mt-3 flex items-center justify-between gap-4">
@@ -687,7 +669,12 @@ defmodule DenarioExUIWeb.DashboardLive do
                 type="button"
                 phx-click="select_artifact"
                 phx-value-artifact={section.key}
-                class={artifact_tab_class(@active_artifact_key == section.key, artifact_present?(@project, section.key))}
+                class={
+                  artifact_tab_class(
+                    @active_artifact_key == section.key,
+                    artifact_present?(@project, section.key)
+                  )
+                }
               >
                 <span>{section.label}</span>
                 <span class="artifact-tab__state">
@@ -708,154 +695,166 @@ defmodule DenarioExUIWeb.DashboardLive do
           </section>
 
           <div class="dashboard-main__split">
-          <section class="panel-shell">
-            <div class="flex items-center justify-between gap-4">
-              <div>
-                <p class="eyebrow">Outputs</p>
-                <p class="panel-copy mt-2">
-                  Inline plots plus direct links to the current TeX, PDF, and referee log.
-                </p>
-              </div>
-            </div>
-
-            <%= if @project do %>
-              <div class="mt-5 flex flex-wrap gap-3">
-                <a
-                  :if={@project.paper_tex_path}
-                  href={~p"/artifacts?project_dir=#{@project.project_dir}&kind=paper_tex"}
-                  class="output-link"
-                  target="_blank"
-                >
-                  Open TeX
-                </a>
-                <a
-                  :if={@project.paper_pdf_path}
-                  href={~p"/artifacts?project_dir=#{@project.project_dir}&kind=paper_pdf"}
-                  class="output-link"
-                  target="_blank"
-                >
-                  Open PDF
-                </a>
-                <a
-                  :if={@project.referee_log_path}
-                  href={~p"/artifacts?project_dir=#{@project.project_dir}&kind=referee_log"}
-                  class="output-link"
-                  target="_blank"
-                >
-                  Open Referee Log
-                </a>
-              </div>
-
-              <%= if @project.keywords_preview != "" do %>
-                <div class="output-shell mt-5">
-                  <p class="field-label">Keywords</p>
-                  <pre class="keywords-preview">{@project.keywords_preview}</pre>
+            <section class="panel-shell">
+              <div class="flex items-center justify-between gap-4">
+                <div>
+                  <p class="eyebrow">Outputs</p>
+                  <p class="panel-copy mt-2">
+                    Inline plots plus direct links to the current TeX, PDF, and referee log.
+                  </p>
                 </div>
-              <% end %>
+              </div>
 
-              <%= if @project.plot_paths != [] do %>
-                <div class="plot-grid mt-5">
+              <%= if @project do %>
+                <div class="mt-5 flex flex-wrap gap-3">
                   <a
-                    :for={plot_path <- @project.plot_paths}
-                    href={
-                      ~p"/artifacts?project_dir=#{@project.project_dir}&kind=plot&name=#{Path.basename(plot_path)}"
-                    }
-                    class="plot-card"
+                    :if={@project.available_outputs["paper_tex"]}
+                    href={~p"/artifacts?project_dir=#{@project.project_dir}&kind=paper_tex"}
+                    class="output-link"
                     target="_blank"
                   >
-                    <img
-                      src={
-                        ~p"/artifacts?project_dir=#{@project.project_dir}&kind=plot&name=#{Path.basename(plot_path)}"
-                      }
-                      alt={Path.basename(plot_path)}
-                    />
-                    <span>{Path.basename(plot_path)}</span>
+                    Open TeX
+                  </a>
+                  <a
+                    :if={@project.available_outputs["paper_pdf"]}
+                    href={~p"/artifacts?project_dir=#{@project.project_dir}&kind=paper_pdf"}
+                    class="output-link"
+                    target="_blank"
+                  >
+                    Open PDF
+                  </a>
+                  <a
+                    :if={@project.available_outputs["referee_log"]}
+                    href={~p"/artifacts?project_dir=#{@project.project_dir}&kind=referee_log"}
+                    class="output-link"
+                    target="_blank"
+                  >
+                    Open Referee Log
                   </a>
                 </div>
+
+                <%= if @project.keywords_preview != "" do %>
+                  <div class="output-shell mt-5">
+                    <p class="field-label">Keywords</p>
+                    <pre class="keywords-preview">{@project.keywords_preview}</pre>
+                  </div>
+                <% end %>
+
+                <%= if @project.plot_paths != [] do %>
+                  <div class="plot-grid mt-5">
+                    <% plot_hrefs =
+                      Map.new(@project.plot_paths, fn plot_path ->
+                        href =
+                          ~p"/artifacts?project_dir=#{@project.project_dir}&kind=plot&name=#{Path.basename(plot_path)}"
+
+                        {plot_path, href}
+                      end) %>
+
+                    <a
+                      :for={plot_path <- @project.plot_paths}
+                      href={Map.fetch!(plot_hrefs, plot_path)}
+                      class="plot-card"
+                      target="_blank"
+                    >
+                      <img
+                        :if={inline_plot?(plot_path)}
+                        src={Map.fetch!(plot_hrefs, plot_path)}
+                        alt={Path.basename(plot_path)}
+                      />
+                      <span>{Path.basename(plot_path)}</span>
+                      <span :if={not inline_plot?(plot_path)} class="tiny-copy">Open file</span>
+                    </a>
+                  </div>
+                <% else %>
+                  <p class="panel-copy mt-5">No plots have been generated yet.</p>
+                <% end %>
               <% else %>
-                <p class="panel-copy mt-5">No plots have been generated yet.</p>
+                <p class="panel-copy mt-5">Open a project to browse its output artifacts.</p>
               <% end %>
-            <% else %>
-              <p class="panel-copy mt-5">Open a project to browse its output artifacts.</p>
-            <% end %>
-          </section>
+            </section>
 
-          <section class="panel-shell">
-            <p class="eyebrow">Model Settings</p>
-            <p class="panel-copy mt-3">
-              These settings drive the next run. Change them here, then rerun the phase you care about.
-            </p>
+            <section class="panel-shell">
+              <p class="eyebrow">Model Settings</p>
+              <p class="panel-copy mt-3">
+                These settings drive the next run. Change them here, then rerun the phase you care about.
+              </p>
 
-            <.form for={%{}} as={:settings} phx-change="update_settings" class="mt-5 space-y-4">
-              <label class="field-shell">
-                <span class="field-label">LLM</span>
-                <input
-                  type="text"
-                  name="settings[llm]"
-                  value={@settings["llm"]}
-                  class="artifact-input artifact-input--single"
-                />
-              </label>
+              <.form for={%{}} as={:settings} phx-change="update_settings" class="mt-5 space-y-4">
+                <label class="field-shell">
+                  <span class="field-label">LLM</span>
+                  <input
+                    type="text"
+                    name="settings[llm]"
+                    value={@settings["llm"]}
+                    class="artifact-input artifact-input--single"
+                  />
+                </label>
 
-              <label class="field-shell">
-                <span class="field-label">Literature Mode</span>
-                <select name="settings[literature_mode]" class="artifact-input artifact-input--single">
-                  <option
-                    value="semantic_scholar"
-                    selected={@settings["literature_mode"] == "semantic_scholar"}
+                <label class="field-shell">
+                  <span class="field-label">Literature Mode</span>
+                  <select
+                    name="settings[literature_mode]"
+                    class="artifact-input artifact-input--single"
                   >
-                    Semantic Scholar / OpenAlex
-                  </option>
-                  <option value="futurehouse" selected={@settings["literature_mode"] == "futurehouse"}>
-                    FutureHouse / Edison
-                  </option>
-                </select>
-              </label>
+                    <option
+                      value="semantic_scholar"
+                      selected={@settings["literature_mode"] == "semantic_scholar"}
+                    >
+                      Semantic Scholar / OpenAlex
+                    </option>
+                    <option
+                      value="futurehouse"
+                      selected={@settings["literature_mode"] == "futurehouse"}
+                    >
+                      FutureHouse / Edison
+                    </option>
+                  </select>
+                </label>
 
-              <label class="field-shell">
-                <span class="field-label">Keyword Taxonomy</span>
-                <select
-                  name="settings[keyword_taxonomy]"
-                  class="artifact-input artifact-input--single"
-                >
-                  <option value="unesco" selected={@settings["keyword_taxonomy"] == "unesco"}>
-                    UNESCO
-                  </option>
-                  <option value="aas" selected={@settings["keyword_taxonomy"] == "aas"}>AAS</option>
-                  <option value="aaai" selected={@settings["keyword_taxonomy"] == "aaai"}>
-                    AAAI
-                  </option>
-                </select>
-              </label>
+                <label class="field-shell">
+                  <span class="field-label">Keyword Taxonomy</span>
+                  <select
+                    name="settings[keyword_taxonomy]"
+                    class="artifact-input artifact-input--single"
+                  >
+                    <option value="unesco" selected={@settings["keyword_taxonomy"] == "unesco"}>
+                      UNESCO
+                    </option>
+                    <option value="aas" selected={@settings["keyword_taxonomy"] == "aas"}>AAS</option>
+                    <option value="aaai" selected={@settings["keyword_taxonomy"] == "aaai"}>
+                      AAAI
+                    </option>
+                  </select>
+                </label>
 
-              <label class="field-shell">
-                <span class="field-label">Paper Journal</span>
-                <select name="settings[journal]" class="artifact-input artifact-input--single">
-                  <option value="none" selected={@settings["journal"] == "none"}>Generic</option>
-                  <option value="neurips" selected={@settings["journal"] == "neurips"}>
-                    NeurIPS
-                  </option>
-                  <option value="icml" selected={@settings["journal"] == "icml"}>ICML</option>
-                  <option value="aps" selected={@settings["journal"] == "aps"}>APS</option>
-                  <option value="aas" selected={@settings["journal"] == "aas"}>AAS</option>
-                  <option value="jhep" selected={@settings["journal"] == "jhep"}>JHEP</option>
-                  <option value="pasj" selected={@settings["journal"] == "pasj"}>PASJ</option>
-                </select>
-              </label>
+                <label class="field-shell">
+                  <span class="field-label">Paper Journal</span>
+                  <select name="settings[journal]" class="artifact-input artifact-input--single">
+                    <option value="none" selected={@settings["journal"] == "none"}>Generic</option>
+                    <option value="neurips" selected={@settings["journal"] == "neurips"}>
+                      NeurIPS
+                    </option>
+                    <option value="icml" selected={@settings["journal"] == "icml"}>ICML</option>
+                    <option value="aps" selected={@settings["journal"] == "aps"}>APS</option>
+                    <option value="aas" selected={@settings["journal"] == "aas"}>AAS</option>
+                    <option value="jhep" selected={@settings["journal"] == "jhep"}>JHEP</option>
+                    <option value="pasj" selected={@settings["journal"] == "pasj"}>PASJ</option>
+                  </select>
+                </label>
 
-              <label class="field-shell field-shell--row">
-                <input type="hidden" name="settings[compile_paper]" value="false" />
-                <input
-                  type="checkbox"
-                  name="settings[compile_paper]"
-                  value="true"
-                  checked={@settings["compile_paper"] in ["true", true]}
-                  class="h-4 w-4 rounded border-white/20 bg-black/20 text-amber-400 focus:ring-amber-400"
-                />
-                <span class="field-label !mb-0">Compile paper PDF after generation</span>
-              </label>
-            </.form>
-          </section>
+                <label class="field-shell field-shell--row">
+                  <input type="hidden" name="settings[compile_paper]" value="false" />
+                  <input
+                    type="checkbox"
+                    name="settings[compile_paper]"
+                    value="true"
+                    checked={@settings["compile_paper"] in ["true", true]}
+                    class="h-4 w-4 rounded border-white/20 bg-black/20 text-amber-400 focus:ring-amber-400"
+                  />
+                  <span class="field-label !mb-0">Compile paper PDF after generation</span>
+                </label>
+              </.form>
+            </section>
           </div>
         </section>
       </div>
@@ -881,7 +880,10 @@ defmodule DenarioExUIWeb.DashboardLive do
 
   defp assign_project(socket, snapshot) do
     active_artifact_key =
-      preferred_artifact_key(snapshot, socket.assigns[:active_artifact_key] || @default_artifact_key)
+      preferred_artifact_key(
+        snapshot,
+        socket.assigns[:active_artifact_key] || @default_artifact_key
+      )
 
     socket
     |> assign(:project, snapshot)
@@ -916,6 +918,9 @@ defmodule DenarioExUIWeb.DashboardLive do
   end
 
   defp error_message(:missing_project_dir), do: "Missing project directory."
+  defp error_message({:invalid_project_dir, path, reason}),
+    do: "Could not open project directory #{path}: #{:file.format_error(reason)}"
+
   defp error_message({:missing_field, field}), do: "Missing required field: #{field}"
   defp error_message({:unknown_artifact, artifact}), do: "Unknown artifact: #{artifact}"
   defp error_message({:unsupported_phase, phase}), do: "Unsupported phase: #{phase}"
@@ -992,7 +997,8 @@ defmodule DenarioExUIWeb.DashboardLive do
       message: Map.get(event, :message) || Map.get(event, "message") || "",
       at: Map.get(event, :at) || Map.get(event, "at") || timestamp(),
       snapshot: Map.get(event, :snapshot) || Map.get(event, "snapshot"),
-      stage: Map.get(event, :stage) || Map.get(event, "stage")
+      stage: Map.get(event, :stage) || Map.get(event, "stage"),
+      metadata: Map.get(event, :metadata) || Map.get(event, "metadata") || %{}
     }
     |> demote_intermediate_terminal_event()
   end
@@ -1071,16 +1077,39 @@ defmodule DenarioExUIWeb.DashboardLive do
 
   defp maybe_note_activity(socket, _event), do: socket
 
-  defp update_running_phases(socket, %{phase: phase, status: :running}) do
-    update(socket, :running_phases, &MapSet.put(&1, phase))
+  defp update_running_phases(socket, %{status: :running} = event) do
+    update(socket, :running_phases, fn running ->
+      Enum.reduce(running_phase_keys(event), running, &MapSet.put(&2, &1))
+    end)
   end
 
-  defp update_running_phases(socket, %{phase: phase, status: status})
+  defp update_running_phases(socket, %{status: status} = event)
        when status in [:success, :error, :cancelled] do
-    update(socket, :running_phases, &MapSet.delete(&1, phase))
+    update(socket, :running_phases, fn running ->
+      Enum.reduce(running_phase_keys(event), running, &MapSet.delete(&2, &1))
+    end)
   end
 
   defp update_running_phases(socket, _event), do: socket
+
+  defp running_phase_keys(%{phase: "research_pilot", status: status})
+       when status in [:success, :error, :cancelled] do
+    ["research_pilot" | @research_pilot_subphases]
+  end
+
+  defp running_phase_keys(event) do
+    subphase =
+      case Map.get(event, :metadata, %{}) do
+        metadata when is_map(metadata) ->
+          Map.get(metadata, :subphase) || Map.get(metadata, "subphase")
+
+        _ ->
+          nil
+      end
+
+    [event.phase, subphase]
+    |> Enum.filter(&(is_binary(&1) and &1 != ""))
+  end
 
   defp ordered_runs(run_states, run_order) do
     Enum.map(run_order, &Map.get(run_states, &1))
@@ -1126,18 +1155,47 @@ defmodule DenarioExUIWeb.DashboardLive do
   defp next_action(snapshot, phase_specs, running_phases) do
     spec =
       cond do
-        not artifact_present?(snapshot, "idea") -> find_phase_spec(phase_specs, "get_idea")
-        not artifact_present?(snapshot, "methodology") -> find_phase_spec(phase_specs, "get_method")
-        not artifact_present?(snapshot, "results") -> find_phase_spec(phase_specs, "get_results")
-        not artifact_present?(snapshot, "literature") -> find_phase_spec(phase_specs, "check_idea")
-        snapshot.keywords_count == 0 -> find_phase_spec(phase_specs, "get_keywords")
-        output_ready_count(snapshot) < 1 -> find_phase_spec(phase_specs, "get_paper")
-        not artifact_present?(snapshot, "referee_report") -> find_phase_spec(phase_specs, "referee")
-        true -> find_phase_spec(phase_specs, "research_pilot")
+        not artifact_present?(snapshot, "data_description") ->
+          nil
+
+        not artifact_present?(snapshot, "idea") ->
+          find_phase_spec(phase_specs, "get_idea")
+
+        not artifact_present?(snapshot, "methodology") ->
+          find_phase_spec(phase_specs, "get_method")
+
+        not artifact_present?(snapshot, "results") ->
+          find_phase_spec(phase_specs, "get_results")
+
+        not artifact_present?(snapshot, "literature") ->
+          find_phase_spec(phase_specs, "check_idea")
+
+        snapshot.keywords_count == 0 ->
+          find_phase_spec(phase_specs, "get_keywords")
+
+        not paper_output_ready?(snapshot) ->
+          find_phase_spec(phase_specs, "get_paper")
+
+        not artifact_present?(snapshot, "referee_report") ->
+          find_phase_spec(phase_specs, "referee")
+
+        true ->
+          find_phase_spec(phase_specs, "research_pilot")
       end
 
-    case spec do
-      nil ->
+    case {spec, artifact_present?(snapshot, "data_description")} do
+      {_, false} ->
+        %{
+          kind: :artifact,
+          key: "data_description",
+          label: "Fill In Data Description",
+          description:
+            "Start by describing the dataset and scientific context so the generation phases have something real to work from.",
+          cta: "Edit Data Description",
+          disabled: false
+        }
+
+      {nil, true} ->
         %{
           kind: :message,
           label: "No next action found",
@@ -1146,18 +1204,24 @@ defmodule DenarioExUIWeb.DashboardLive do
           disabled: true
         }
 
-      %{key: key} = resolved ->
+      {%{key: key} = resolved, true} ->
         %{
           kind: :phase,
           key: key,
           label: resolved.label,
           description: next_action_copy(key),
           cta:
-            if(MapSet.member?(running_phases, key), do: "#{resolved.label} Running", else: "Run #{resolved.label}"),
+            if(MapSet.member?(running_phases, key),
+              do: "#{resolved.label} Running",
+              else: "Run #{resolved.label}"
+            ),
           disabled: MapSet.member?(running_phases, key) or not resolved.ready
         }
     end
   end
+
+  defp next_action_copy("data_description"),
+    do: "Start by describing the dataset, observables, and scientific context."
 
   defp next_action_copy("get_idea"),
     do: "Start by locking the paper idea before you spend cycles on methods or results."
@@ -1193,7 +1257,8 @@ defmodule DenarioExUIWeb.DashboardLive do
   defp preferred_artifact_key(nil, current_key), do: current_key || @default_artifact_key
 
   defp preferred_artifact_key(snapshot, current_key) do
-    fallback = Enum.find(@artifact_keys, &(not artifact_present?(snapshot, &1))) || @default_artifact_key
+    fallback =
+      Enum.find(@artifact_keys, &(not artifact_present?(snapshot, &1))) || @default_artifact_key
 
     cond do
       current_key not in @artifact_keys -> fallback
@@ -1211,14 +1276,29 @@ defmodule DenarioExUIWeb.DashboardLive do
     Enum.count(snapshot.artifact_presence, fn {_key, present?} -> present? end)
   end
 
+  defp inline_plot?(plot_path) when is_binary(plot_path) do
+    case plot_path |> Path.extname() |> String.downcase() do
+      ".png" -> true
+      ".jpg" -> true
+      ".jpeg" -> true
+      ".svg" -> true
+      _ -> false
+    end
+  end
+
+  defp inline_plot?(_plot_path), do: false
+
   defp output_ready_count(nil), do: 0
 
   defp output_ready_count(snapshot) do
-    paper_outputs =
-      Enum.count([snapshot.paper_tex_path, snapshot.paper_pdf_path], &is_binary/1)
+    Enum.count(["paper_tex", "paper_pdf", "referee_log", "plots"], fn key ->
+      Map.get(snapshot.available_outputs, key, false)
+    end)
+  end
 
-    base = paper_outputs + if(snapshot.referee_log_path, do: 1, else: 0)
-    base + if(snapshot.plot_paths != [], do: 1, else: 0)
+  defp paper_output_ready?(snapshot) do
+    Map.get(snapshot.available_outputs, "paper_tex", false) or
+      Map.get(snapshot.available_outputs, "paper_pdf", false)
   end
 
   defp project_completion(nil), do: 0
@@ -1356,7 +1436,10 @@ defmodule DenarioExUIWeb.DashboardLive do
   defp run_card_class(false), do: "run-card"
 
   defp artifact_tab_class(true, true), do: "artifact-tab artifact-tab--active artifact-tab--ready"
-  defp artifact_tab_class(true, false), do: "artifact-tab artifact-tab--active artifact-tab--missing"
+
+  defp artifact_tab_class(true, false),
+    do: "artifact-tab artifact-tab--active artifact-tab--missing"
+
   defp artifact_tab_class(false, true), do: "artifact-tab artifact-tab--ready"
   defp artifact_tab_class(false, false), do: "artifact-tab artifact-tab--missing"
 end

@@ -3,6 +3,21 @@ defmodule DenarioExUI.PhaseRunnerTest do
 
   alias DenarioExUI.{PhaseEvents, PhaseRunner, PhaseRuns}
 
+  test "phase_options fans a single dashboard model out across the results workflow" do
+    assert PhaseRunner.phase_options("get_results", %{"llm" => "openai:gpt-4.1-mini"}) == [
+             planner_model: "openai:gpt-4.1-mini",
+             plan_reviewer_model: "openai:gpt-4.1-mini",
+             engineer_model: "openai:gpt-4.1-mini",
+             researcher_model: "openai:gpt-4.1-mini",
+             formatter_model: "openai:gpt-4.1-mini"
+           ]
+  end
+
+  test "start rejects unsupported phases immediately" do
+    assert {:error, {:unsupported_phase, "totally_invalid"}} =
+             PhaseRunner.start("/tmp/denario_ex_invalid_phase", "totally_invalid", %{})
+  end
+
   test "cancel stops an active run and broadcasts a cancelled event" do
     project_dir =
       Path.join(

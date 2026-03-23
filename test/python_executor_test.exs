@@ -79,4 +79,20 @@ defmodule DenarioEx.PythonExecutorTest do
     assert {:ok, result} = PythonExecutor.execute(code, work_dir: work_dir, step_id: "override")
     assert String.contains?(result["output"], "from_override")
   end
+
+  test "execute/2 reports only files created or changed by the current run", %{work_dir: work_dir} do
+    stale_plot = Path.join(work_dir, "stale_plot.png")
+    File.write!(stale_plot, "stale bytes")
+
+    code = """
+    from pathlib import Path
+
+    Path("fresh_plot.png").write_bytes(b"fresh bytes")
+    print("saved_plot=fresh_plot.png")
+    """
+
+    assert {:ok, result} = PythonExecutor.execute(code, work_dir: work_dir, step_id: "fresh")
+
+    assert result["generated_files"] == [Path.join(work_dir, "fresh_plot.png")]
+  end
 end

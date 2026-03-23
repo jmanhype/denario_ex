@@ -4,34 +4,38 @@ defmodule DenarioExUI.PhaseRunner do
   alias DenarioEx
   alias DenarioExUI.{PhaseEvents, PhaseRuns, Projects}
 
-  @spec start(pid(), String.t(), String.t(), map()) :: {:ok, pid()} | {:error, term()}
-  def start(_live_view_pid, project_dir, phase, settings) do
-    run_id = PhaseEvents.new_run_id()
-    expanded_dir = Path.expand(project_dir)
+  @spec start(String.t(), String.t(), map()) :: {:ok, String.t()} | {:error, term()}
+  def start(project_dir, phase, settings) do
+    if Projects.phase_supported?(phase) do
+      run_id = PhaseEvents.new_run_id()
+      expanded_dir = Path.expand(project_dir)
 
-    case Task.Supervisor.start_child(DenarioExUI.TaskSupervisor, fn ->
-           emit(expanded_dir, run_id, phase, %{
-             status: :running,
-             kind: :started,
-             progress: 3,
-             message: "#{Projects.phase_label(phase)} started.",
-             stage: "#{phase}:start"
-           })
+      case Task.Supervisor.start_child(DenarioExUI.TaskSupervisor, fn ->
+             emit(expanded_dir, run_id, phase, %{
+               status: :running,
+               kind: :started,
+               progress: 3,
+               message: "#{Projects.phase_label(phase)} started.",
+               stage: "#{phase}:start"
+             })
 
-           _ = run(expanded_dir, phase, settings, run_id)
-         end) do
-      {:ok, pid} ->
-        PhaseRuns.put(run_id, %{
-          pid: pid,
-          project_dir: expanded_dir,
-          phase: phase,
-          settings: settings
-        })
+             _ = run(expanded_dir, phase, settings, run_id)
+           end) do
+        {:ok, pid} ->
+          PhaseRuns.put(run_id, %{
+            pid: pid,
+            project_dir: expanded_dir,
+            phase: phase,
+            settings: settings
+          })
 
-        {:ok, run_id}
+          {:ok, run_id}
 
-      {:error, _reason} = error ->
-        error
+        {:error, _reason} = error ->
+          error
+      end
+    else
+      {:error, {:unsupported_phase, phase}}
     end
   end
 
@@ -162,71 +166,132 @@ defmodule DenarioExUI.PhaseRunner do
     invoke_phase(session, phase, settings, callback)
   end
 
-  defp invoke_phase(session, "enhance_data_description", settings, callback) do
-    DenarioEx.enhance_data_description(
-      session,
+  @doc false
+  @spec phase_options(String.t(), map()) :: keyword()
+  def phase_options("enhance_data_description", settings) do
+    [
       summarizer_model: model(settings),
-      summarizer_response_formatter_model: model(settings),
-      progress_callback: callback
+      summarizer_response_formatter_model: model(settings)
+    ]
+  end
+
+  def phase_options("get_idea", settings) do
+    [
+      mode: :fast,
+      llm: model(settings)
+    ]
+  end
+
+  def phase_options("get_method", settings) do
+    [
+      mode: :fast,
+      llm: model(settings)
+    ]
+  end
+
+  def phase_options("get_results", settings) do
+    selected_model = model(settings)
+
+    [
+      planner_model: selected_model,
+      plan_reviewer_model: selected_model,
+      engineer_model: selected_model,
+      researcher_model: selected_model,
+      formatter_model: selected_model
+    ]
+  end
+
+  def phase_options("check_idea", settings) do
+    [
+      llm: model(settings),
+      mode: literature_mode(settings)
+    ]
+  end
+
+  def phase_options("get_keywords", settings) do
+    [
+      llm: model(settings),
+      kw_type: keyword_taxonomy(settings),
+      n_keywords: 5
+    ]
+  end
+
+  def phase_options("get_paper", settings) do
+    [
+      llm: model(settings),
+      journal: journal(settings),
+      compile: compile_paper?(settings)
+    ]
+  end
+
+  def phase_options("referee", settings) do
+    [llm: model(settings)]
+  end
+
+  def phase_options(_phase, _settings), do: []
+
+  defp invoke_phase(session, "enhance_data_description", settings, callback) do
+    session
+    |> DenarioEx.enhance_data_description(
+      phase_options("enhance_data_description", settings)
+      |> Keyword.put(:progress_callback, callback)
     )
   end
 
   defp invoke_phase(session, "get_idea", settings, callback) do
-    DenarioEx.get_idea(session,
-      mode: :fast,
-      llm: model(settings),
-      progress_callback: callback
+    session
+    |> DenarioEx.get_idea(
+      phase_options("get_idea", settings)
+      |> Keyword.put(:progress_callback, callback)
     )
   end
 
   defp invoke_phase(session, "get_method", settings, callback) do
-    DenarioEx.get_method(session,
-      mode: :fast,
-      llm: model(settings),
-      progress_callback: callback
+    session
+    |> DenarioEx.get_method(
+      phase_options("get_method", settings)
+      |> Keyword.put(:progress_callback, callback)
     )
   end
 
   defp invoke_phase(session, "get_results", settings, callback) do
-    DenarioEx.get_results(session,
-      llm: model(settings),
-      progress_callback: callback
+    session
+    |> DenarioEx.get_results(
+      phase_options("get_results", settings)
+      |> Keyword.put(:progress_callback, callback)
     )
   end
 
   defp invoke_phase(session, "check_idea", settings, callback) do
-    DenarioEx.check_idea(session,
-      llm: model(settings),
-      mode: literature_mode(settings),
-      progress_callback: callback
+    session
+    |> DenarioEx.check_idea(
+      phase_options("check_idea", settings)
+      |> Keyword.put(:progress_callback, callback)
     )
   end
 
   defp invoke_phase(session, "get_keywords", settings, callback) do
-    DenarioEx.get_keywords(
-      session,
+    session
+    |> DenarioEx.get_keywords(
       nil,
-      llm: model(settings),
-      kw_type: keyword_taxonomy(settings),
-      n_keywords: 5,
-      progress_callback: callback
+      phase_options("get_keywords", settings)
+      |> Keyword.put(:progress_callback, callback)
     )
   end
 
   defp invoke_phase(session, "get_paper", settings, callback) do
-    DenarioEx.get_paper(
-      session,
-      llm: model(settings),
-      journal: journal(settings),
-      compile: compile_paper?(settings),
-      progress_callback: callback
+    session
+    |> DenarioEx.get_paper(
+      phase_options("get_paper", settings)
+      |> Keyword.put(:progress_callback, callback)
     )
   end
 
   defp invoke_phase(session, "referee", settings, callback) do
-    DenarioEx.referee(session,
-      llm: model(settings),
-      progress_callback: callback
+    session
+    |> DenarioEx.referee(
+      phase_options("referee", settings)
+      |> Keyword.put(:progress_callback, callback)
     )
   end
 

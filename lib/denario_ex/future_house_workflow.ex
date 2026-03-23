@@ -1,7 +1,7 @@
 defmodule DenarioEx.FutureHouseWorkflow do
   @moduledoc false
 
-  alias DenarioEx.{FutureHouse, KeyManager, Progress, WorkflowPrompts}
+  alias DenarioEx.{FutureHouse, KeyManager, Progress, Text, WorkflowPrompts}
 
   @spec run(DenarioEx.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def run(session, opts \\ []) do
@@ -89,9 +89,5 @@ defmodule DenarioEx.FutureHouseWorkflow do
     "Has anyone worked on or explored the following idea?\n" <> cleaned
   end
 
-  defp fetch(nil, _key), do: nil
-
-  defp fetch(map, key) when is_map(map) do
-    Map.get(map, key) || Map.get(map, String.to_atom(key))
-  end
+  defp fetch(map, key), do: Text.fetch(map, key)
 end

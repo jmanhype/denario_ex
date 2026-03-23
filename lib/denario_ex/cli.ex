@@ -264,6 +264,26 @@ defmodule DenarioEx.CLI do
     1
   end
 
+  defp cli_error({:missing_field, field}) do
+    IO.puts(:stderr, "Missing required field: #{field}")
+    1
+  end
+
+  defp cli_error({:missing_api_key, provider}) do
+    IO.puts(:stderr, "Missing API key for #{provider}.")
+    1
+  end
+
+  defp cli_error({:unsupported_literature_mode, mode}) do
+    IO.puts(:stderr, "Unsupported literature mode: #{inspect(mode)}")
+    1
+  end
+
+  defp cli_error({:invalid_project_dir, project_dir, reason}) do
+    IO.puts(:stderr, "Could not open #{project_dir}: #{:file.format_error(reason)}")
+    1
+  end
+
   defp cli_error(reason) do
     IO.puts(:stderr, "Command failed: #{inspect(reason)}")
     1

@@ -4,6 +4,7 @@ defmodule DenarioExUIWeb.DashboardLiveTest do
   import Phoenix.LiveViewTest
 
   alias DenarioEx
+  alias DenarioEx.ArtifactRegistry
   alias DenarioExUI.Projects
 
   test "root route renders the dashboard shell", %{conn: conn} do
@@ -50,6 +51,22 @@ defmodule DenarioExUIWeb.DashboardLiveTest do
     assert html =~ "Temporal residual scoring with interpretable features."
   end
 
+  test "blank projects recommend editing the data description instead of a blocked phase", %{
+    conn: conn
+  } do
+    project_dir = tmp_project_dir("blank_project")
+    {:ok, _denario} = DenarioEx.new(project_dir: project_dir, clear_project_dir: true)
+
+    {:ok, view, html} = live(conn, ~p"/?project_dir=#{project_dir}")
+
+    assert html =~ "Fill In Data Description"
+
+    assert has_element?(
+             view,
+             ~s(button[phx-click="select_artifact"][phx-value-artifact="data_description"])
+           )
+  end
+
   test "phase events update the run monitor and live log", %{conn: conn} do
     project_dir = tmp_project_dir("run_monitor")
     {:ok, denario} = DenarioEx.new(project_dir: project_dir, clear_project_dir: true)
@@ -75,6 +92,34 @@ defmodule DenarioExUIWeb.DashboardLiveTest do
     assert html =~ "Planning execution run."
     assert html =~ "Step 2 of 4 finished."
     assert html =~ "Cancel Run"
+  end
+
+  test "research_pilot subphase events disable the matching phase button", %{conn: conn} do
+    project_dir = tmp_project_dir("research_pilot_subphase")
+    {:ok, denario} = DenarioEx.new(project_dir: project_dir, clear_project_dir: true)
+    {:ok, denario} = DenarioEx.set_data_description(denario, "Mesoscale atmospheric dataset.")
+
+    {:ok, _denario} =
+      DenarioEx.set_idea(denario, "Detect thermal drift before subsystem failure.")
+
+    {:ok, view, _html} = live(conn, ~p"/?project_dir=#{project_dir}")
+
+    send(
+      view.pid,
+      {:phase_event,
+       %{
+         run_id: "run-pilot",
+         phase: "research_pilot",
+         status: :running,
+         kind: :progress,
+         progress: 18,
+         message: "Generating the research idea.",
+         metadata: %{subphase: "get_idea"},
+         at: "2026-03-22 10:00:00"
+       }}
+    )
+
+    assert has_element?(view, ~s(button[phx-value-phase="get_idea"][disabled]))
   end
 
   test "success phase events refresh the loaded project snapshot", %{conn: conn} do
@@ -113,6 +158,104 @@ defmodule DenarioExUIWeb.DashboardLiveTest do
       |> render_click()
 
     assert html =~ "Detect thermal drift before subsystem failure."
+  end
+
+  test "stale output paths do not render broken artifact links", %{conn: conn} do
+    project_dir = tmp_project_dir("stale_outputs")
+    {:ok, denario} = DenarioEx.new(project_dir: project_dir, clear_project_dir: true)
+    {:ok, denario} = DenarioEx.set_data_description(denario, "Satellite telemetry archive.")
+    {:ok, view, _html} = live(conn, ~p"/?project_dir=#{project_dir}")
+
+    snapshot =
+      denario
+      |> Projects.snapshot()
+      |> Map.put(:paper_tex_path, "/tmp/missing-paper.tex")
+      |> Map.put(:paper_pdf_path, "/tmp/missing-paper.pdf")
+      |> Map.put(:referee_log_path, "/tmp/missing-referee.log")
+      |> put_in([:available_outputs, "paper_tex"], false)
+      |> put_in([:available_outputs, "paper_pdf"], false)
+      |> put_in([:available_outputs, "referee_log"], false)
+
+    send(
+      view.pid,
+      {:phase_event,
+       %{
+         run_id: "run-stale",
+         phase: "get_paper",
+         status: :success,
+         kind: :finished,
+         progress: 100,
+         message: "Paper generated.",
+         at: "2026-03-22 10:05:00",
+         snapshot: snapshot
+       }}
+    )
+
+    html = render(view)
+
+    refute html =~ "Open TeX"
+    refute html =~ "Open PDF"
+    refute html =~ "Open Referee Log"
+  end
+
+  test "recommended next step stays on paper generation when only plots exist", %{conn: conn} do
+    project_dir = tmp_project_dir("next_action_paper")
+    {:ok, denario} = DenarioEx.new(project_dir: project_dir, clear_project_dir: true)
+    {:ok, denario} = DenarioEx.set_data_description(denario, "Satellite telemetry archive.")
+    {:ok, denario} = DenarioEx.set_idea(denario, "Detect thermal drift before subsystem failure.")
+
+    {:ok, denario} =
+      DenarioEx.set_method(
+        denario,
+        "Compare blocked temporal splits with interpretable features."
+      )
+
+    {:ok, denario} =
+      DenarioEx.set_results(denario, "The detector separates nominal and anomalous periods.")
+
+    plot_path = Path.join(project_dir, "source_plot.png")
+    File.write!(plot_path, "fake png bytes")
+    {:ok, _denario} = DenarioEx.set_plots(denario, [plot_path])
+    :ok = ArtifactRegistry.persist_keywords(project_dir, ["telemetry anomaly detection"])
+
+    {:ok, view, html} = live(conn, ~p"/?project_dir=#{project_dir}")
+
+    assert html =~ "Generate Paper"
+    assert has_element?(view, ~s(button[phx-value-phase="get_paper"]))
+  end
+
+  test "non-inline plot artifacts render as links without broken image tags", %{conn: conn} do
+    project_dir = tmp_project_dir("plot_pdf")
+    {:ok, denario} = DenarioEx.new(project_dir: project_dir, clear_project_dir: true)
+    {:ok, denario} = DenarioEx.set_data_description(denario, "Satellite telemetry archive.")
+    {:ok, view, _html} = live(conn, ~p"/?project_dir=#{project_dir}")
+
+    snapshot =
+      denario
+      |> Projects.snapshot()
+      |> Map.put(:plot_paths, ["/tmp/diagnostic_plot.pdf"])
+      |> put_in([:available_outputs, "plots"], true)
+
+    send(
+      view.pid,
+      {:phase_event,
+       %{
+         run_id: "run-plot-pdf",
+         phase: "get_results",
+         status: :success,
+         kind: :finished,
+         progress: 100,
+         message: "Results generated.",
+         at: "2026-03-22 10:10:00",
+         snapshot: snapshot
+       }}
+    )
+
+    html = render(view)
+
+    assert html =~ "diagnostic_plot.pdf"
+    assert html =~ "Open file"
+    refute html =~ ~s(alt="diagnostic_plot.pdf")
   end
 
   test "cancelled runs show retry controls and preserve the cancellation state", %{conn: conn} do

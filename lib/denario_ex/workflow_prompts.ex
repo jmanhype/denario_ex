@@ -259,10 +259,11 @@ defmodule DenarioEx.WorkflowPrompts do
     Previous literature reasoning:
     #{if messages == "", do: "none", else: messages}
 
-    Papers found this round:
+    Papers found so far:
     #{if papers_text == "", do: "none", else: papers_text}
 
     When proposing a query, focus on the scientific problem, modality, domain, and evaluation setup.
+    If decision=query, return a non-empty query string.
     Avoid implementation-only terms such as Python, plotting, tutorials, or generic workflow language.
 
     The first round must always return decision=query.
@@ -554,16 +555,18 @@ defmodule DenarioEx.WorkflowPrompts do
   end
 
   defp render_step_outputs(step_outputs) do
+    step_outputs = List.wrap(step_outputs)
+
     if step_outputs == [] do
       "none"
     else
       Enum.map_join(step_outputs, "\n\n", fn step_output ->
         """
-        Step #{Map.get(step_output, :id, "")}
-        Agent: #{Map.get(step_output, :agent, "")}
-        Goal: #{Map.get(step_output, :goal, "")}
+        Step #{Text.fetch(step_output, "id") || ""}
+        Agent: #{Text.fetch(step_output, "agent") || ""}
+        Goal: #{Text.fetch(step_output, "goal") || ""}
         Output:
-        #{Map.get(step_output, :output, "")}
+        #{Text.fetch(step_output, "output") || ""}
         """
       end)
     end

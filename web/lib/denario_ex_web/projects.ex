@@ -125,6 +125,13 @@ defmodule DenarioExUI.Projects do
     end
   end
 
+  @spec phase_supported?(String.t()) :: boolean()
+  def phase_supported?(phase_key) when is_binary(phase_key) do
+    Enum.any?(@phase_specs, &(&1.key == phase_key))
+  end
+
+  def phase_supported?(_phase_key), do: false
+
   @spec load(String.t()) :: {:ok, map()} | {:error, term()}
   def load(project_dir) do
     with {:ok, expanded} <- normalize_project_dir(project_dir),
@@ -145,6 +152,7 @@ defmodule DenarioExUI.Projects do
   def snapshot(%DenarioEx{} = session) do
     research = session.research
     artifact_values = artifact_values(research)
+    plot_paths = current_plot_paths(session)
 
     referee_log_path =
       Path.join(ArtifactRegistry.referee_output_dir(session.project_dir), "referee.log")
@@ -158,7 +166,7 @@ defmodule DenarioExUI.Projects do
       artifact_values: artifact_values,
       artifact_presence:
         Map.new(artifact_values, fn {key, content} -> {key, present?(content)} end),
-      plot_paths: research.plot_paths,
+      plot_paths: plot_paths,
       paper_tex_path: research.paper_tex_path,
       paper_pdf_path: research.paper_pdf_path,
       referee_log_path: if(File.regular?(referee_log_path), do: referee_log_path, else: nil),
@@ -168,7 +176,9 @@ defmodule DenarioExUI.Projects do
       available_outputs: %{
         "paper_tex" => file_exists?(research.paper_tex_path),
         "paper_pdf" => file_exists?(research.paper_pdf_path),
-        "results" => present?(research.results)
+        "results" => present?(research.results),
+        "referee_log" => file_exists?(referee_log_path),
+        "plots" => plot_paths != []
       }
     }
   end
@@ -177,6 +187,13 @@ defmodule DenarioExUI.Projects do
     with {:ok, expanded} <- normalize_project_dir(project_dir) do
       DenarioEx.new(project_dir: expanded)
     end
+  end
+
+  defp current_plot_paths(session) do
+    session.research.plot_paths
+    |> Kernel.++(ArtifactRegistry.plot_paths(session.project_dir))
+    |> Enum.filter(&file_exists?/1)
+    |> Enum.uniq()
   end
 
   defp normalize_project_dir(project_dir) when is_binary(project_dir) do

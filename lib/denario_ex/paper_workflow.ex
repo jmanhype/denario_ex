@@ -218,11 +218,10 @@ defmodule DenarioEx.PaperWorkflow do
   defp maybe_generate_keywords(keywords, _client, _llm, _keys, _writer, _research), do: keywords
 
   defp available_plot_paths(session) do
-    if session.research.plot_paths == [] do
-      Path.wildcard(Path.join(ArtifactRegistry.plots_dir(session.project_dir), "*.png"))
-    else
-      session.research.plot_paths
-    end
+    session.research.plot_paths
+    |> Kernel.++(ArtifactRegistry.plot_paths(session.project_dir))
+    |> Enum.filter(&File.regular?/1)
+    |> Enum.uniq()
   end
 
   defp normalize_keyword_state(keywords, _latex_keywords)
@@ -395,43 +394,31 @@ defmodule DenarioEx.PaperWorkflow do
     """
   end
 
-  defp maybe_compile(false, _tex_name, _pdf_path, _paper_dir, _add_citations), do: {:ok, nil}
+  defp maybe_compile(false, _tex_name, pdf_path, _paper_dir, _add_citations) do
+    remove_existing_pdf(pdf_path)
+    {:ok, nil}
+  end
 
   defp maybe_compile(true, tex_name, pdf_path, paper_dir, add_citations) do
     if System.find_executable("xelatex") do
+      remove_existing_pdf(pdf_path)
       compile_tex(tex_name, pdf_path, paper_dir, add_citations)
     else
+      remove_existing_pdf(pdf_path)
       {:ok, nil}
     end
   end
 
   defp compile_tex(tex_name, pdf_path, paper_dir, add_citations) do
-    {output_1, status_1} =
-      System.cmd("xelatex", ["-interaction=nonstopmode", tex_name],
-        cd: paper_dir,
-        stderr_to_stdout: true
-      )
-
-    if status_1 != 0 do
-      {:error, {:latex_compile_failed, output_1}}
-    else
-      if add_citations and File.exists?(Path.join(paper_dir, "bibliography.bib")) and
-           System.find_executable("bibtex") do
-        base = Path.rootname(tex_name)
-        System.cmd("bibtex", [base], cd: paper_dir, stderr_to_stdout: true)
-      end
-
-      System.cmd("xelatex", ["-interaction=nonstopmode", tex_name],
-        cd: paper_dir,
-        stderr_to_stdout: true
-      )
-
-      System.cmd("xelatex", ["-interaction=nonstopmode", tex_name],
-        cd: paper_dir,
-        stderr_to_stdout: true
-      )
-
+    with :ok <- run_xelatex_pass(tex_name, paper_dir),
+         :ok <- run_bibtex_pass(tex_name, paper_dir, add_citations),
+         :ok <- run_xelatex_pass(tex_name, paper_dir),
+         :ok <- run_xelatex_pass(tex_name, paper_dir) do
       {:ok, if(File.exists?(pdf_path), do: pdf_path, else: nil)}
+    else
+      {:error, reason} ->
+        remove_existing_pdf(pdf_path)
+        {:error, reason}
     end
   end
 
@@ -461,21 +448,62 @@ defmodule DenarioEx.PaperWorkflow do
     end)
   end
 
+  defp run_xelatex_pass(tex_name, paper_dir) do
+    case System.cmd("xelatex", ["-interaction=nonstopmode", tex_name],
+           cd: paper_dir,
+           stderr_to_stdout: true
+         ) do
+      {_output, 0} -> :ok
+      {output, _status} -> {:error, {:latex_compile_failed, output}}
+    end
+  end
+
+  defp run_bibtex_pass(_tex_name, _paper_dir, false), do: :ok
+
+  defp run_bibtex_pass(tex_name, paper_dir, true) do
+    bibliography_path = Path.join(paper_dir, "bibliography.bib")
+
+    if File.exists?(bibliography_path) and System.find_executable("bibtex") do
+      base = Path.rootname(tex_name)
+
+      case System.cmd("bibtex", [base], cd: paper_dir, stderr_to_stdout: true) do
+        {_output, 0} -> :ok
+        {output, _status} -> {:error, {:latex_bibliography_failed, output}}
+      end
+    else
+      :ok
+    end
+  end
+
+  defp remove_existing_pdf(pdf_path) when is_binary(pdf_path) do
+    if File.exists?(pdf_path), do: File.rm(pdf_path)
+    :ok
+  end
+
+  defp remove_existing_pdf(_pdf_path), do: :ok
+
   defp normalize_journal(nil), do: :none
   defp normalize_journal(:none), do: :none
-  defp normalize_journal("none"), do: :none
   defp normalize_journal(:aas), do: :aas
-  defp normalize_journal("AAS"), do: :aas
   defp normalize_journal(:aps), do: :aps
-  defp normalize_journal("APS"), do: :aps
   defp normalize_journal(:icml), do: :icml
-  defp normalize_journal("ICML"), do: :icml
   defp normalize_journal(:jhep), do: :jhep
-  defp normalize_journal("JHEP"), do: :jhep
   defp normalize_journal(:neurips), do: :neurips
-  defp normalize_journal("NeurIPS"), do: :neurips
   defp normalize_journal(:pasj), do: :pasj
-  defp normalize_journal("PASJ"), do: :pasj
+
+  defp normalize_journal(journal) when is_binary(journal) do
+    case String.downcase(journal) do
+      "none" -> :none
+      "aas" -> :aas
+      "aps" -> :aps
+      "icml" -> :icml
+      "jhep" -> :jhep
+      "neurips" -> :neurips
+      "pasj" -> :pasj
+      _ -> :none
+    end
+  end
+
   defp normalize_journal(_journal), do: :none
 
   defp compile_message(true), do: "TeX written. Compiling the PDF."

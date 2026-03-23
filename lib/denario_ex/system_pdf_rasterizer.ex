@@ -6,6 +6,7 @@ defmodule DenarioEx.SystemPdfRasterizer do
   @impl true
   def rasterize(pdf_path, output_dir, opts \\ []) do
     File.mkdir_p!(output_dir)
+    clear_existing_pages(output_dir)
 
     cond do
       executable = System.find_executable("pdftoppm") ->
@@ -17,6 +18,13 @@ defmodule DenarioEx.SystemPdfRasterizer do
       true ->
         {:error, :renderer_unavailable}
     end
+  end
+
+  defp clear_existing_pages(output_dir) do
+    output_dir
+    |> Path.join("page-*.png")
+    |> Path.wildcard()
+    |> Enum.each(&File.rm!/1)
   end
 
   defp rasterize_with_pdftoppm(executable, pdf_path, output_dir, opts) do

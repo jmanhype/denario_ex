@@ -125,7 +125,7 @@ defmodule DenarioEx.LiteratureWorkflow do
     with {:ok, object} <- AI.generate_object(client, prompt, @decision_schema, llm, keys),
          decision <- normalize_decision(Text.fetch(object, "decision")),
          reason <- Text.fetch(object, "reason") || "",
-         query <- Text.fetch(object, "query") || "" do
+         query <- normalize_query(Text.fetch(object, "query")) do
       messages =
         state.messages <>
           "\nRound #{iteration}\nDecision: #{decision}\nReason: #{reason}\nQuery: #{query}\n"
@@ -140,6 +140,9 @@ defmodule DenarioEx.LiteratureWorkflow do
       cond do
         decision in ["novel", "not novel"] ->
           {:ok, %{state | messages: messages, decision: decision}}
+
+        query == "" ->
+          {:error, {:missing_field, :literature_query}}
 
         iteration + 1 >= max_iterations ->
           {:ok, %{state | messages: messages, decision: "novel"}}
@@ -166,7 +169,7 @@ defmodule DenarioEx.LiteratureWorkflow do
                 %{
                   state
                   | messages: messages,
-                    papers_text: papers_text,
+                    papers_text: append_papers_text(state.papers_text, papers_text),
                     sources: merge_sources(state.sources, new_sources),
                     decision: "query"
                 },
@@ -249,6 +252,9 @@ defmodule DenarioEx.LiteratureWorkflow do
   end
 
   defp normalize_decision(_decision), do: "query"
+
+  defp normalize_query(query) when is_binary(query), do: String.trim(query)
+  defp normalize_query(_query), do: ""
 
   defp select_relevant_papers([], _context, _query, _client, _llm, _keys), do: {[], ""}
 
@@ -476,7 +482,7 @@ defmodule DenarioEx.LiteratureWorkflow do
             | messages:
                 messages <>
                   "Search status: #{primary_failure_note} Falling back to OpenAlex.\n",
-              papers_text: papers_text,
+              papers_text: append_papers_text(state.papers_text, papers_text),
               sources: merge_sources(state.sources, new_sources),
               decision: "query"
           },
@@ -529,5 +535,12 @@ defmodule DenarioEx.LiteratureWorkflow do
 
   defp search_failure_note(error) do
     "Semantic Scholar request failed: #{inspect(error)}"
+  end
+
+  defp append_papers_text("", new_text), do: new_text
+  defp append_papers_text(existing_text, ""), do: existing_text
+
+  defp append_papers_text(existing_text, new_text) do
+    existing_text <> "\n" <> new_text
   end
 end

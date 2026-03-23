@@ -10,10 +10,14 @@ defmodule DenarioEx.Progress do
   def emit(nil, _event), do: :ok
 
   def emit(callback, event) when is_function(callback, 1) do
-    callback.(normalize_event(event))
-    :ok
-  rescue
-    _error -> :ok
+    try do
+      callback.(normalize_event(event))
+      :ok
+    rescue
+      _error -> :ok
+    catch
+      _kind, _reason -> :ok
+    end
   end
 
   def emit(_callback, _event), do: :ok

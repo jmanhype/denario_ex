@@ -20,6 +20,8 @@ defmodule DenarioExUIWeb.ProjectAssetController do
     end
   end
 
+  def show(conn, _params), do: send_resp(conn, 400, "Bad request")
+
   defp resolve(project_dir, "paper_pdf", _params), do: project_artifact(project_dir, :paper_pdf)
   defp resolve(project_dir, "paper_tex", _params), do: project_artifact(project_dir, :paper_tex)
   defp resolve(project_dir, "referee_log", _params), do: referee_log(project_dir)

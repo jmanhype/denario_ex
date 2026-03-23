@@ -105,6 +105,29 @@ defmodule DenarioEx.ParityExtensionsTest do
     end
   end
 
+  defmodule NestedAtomFutureHouseClient do
+    @behaviour DenarioEx.FutureHouseClient
+
+    @impl true
+    def run_owl_review(_prompt, _keys, _opts) do
+      {:ok,
+       %{
+         environment_frame: %{
+           state: %{
+             state: %{
+               response: %{
+                 answer: %{
+                   formatted_answer:
+                     "<DESIRED_RESPONSE_FORMAT>\nAnswer: yes\n\nRelated previous work: Atom-key nested response path works.\n</DESIRED_RESPONSE_FORMAT>"
+                 }
+               }
+             }
+           }
+         }
+       }}
+    end
+  end
+
   defmodule FakeRasterizer do
     @behaviour DenarioEx.PdfRasterizer
 
@@ -357,6 +380,30 @@ defmodule DenarioEx.ParityExtensionsTest do
              )
   end
 
+  test "futurehouse workflow accepts nested atom-key responses without string-to-atom conversion", %{
+    project_dir: project_dir
+  } do
+    keys = %DenarioEx.KeyManager{future_house: "fh-key"}
+
+    assert {:ok, denario} =
+             DenarioEx.new(project_dir: project_dir, clear_project_dir: true, keys: keys)
+
+    assert {:ok, denario} =
+             DenarioEx.set_data_description(denario, "Urban sensor anomaly project.")
+
+    assert {:ok, denario} =
+             DenarioEx.set_idea(denario, "Interpretable anomaly detection.")
+
+    assert {:ok, denario} =
+             DenarioEx.check_idea(
+               denario,
+               mode: :futurehouse,
+               future_house_client: NestedAtomFutureHouseClient
+             )
+
+    assert String.contains?(denario.research.literature, "Atom-key nested response path works.")
+  end
+
   test "referee prefers PDF image review and persists report and output artifacts", %{
     project_dir: project_dir
   } do
@@ -433,5 +480,42 @@ defmodule DenarioEx.ParityExtensionsTest do
     assert String.contains?(denario.research.referee_report, "Text-only referee review")
     assert_received {:llm_text_prompt, prompt, "openai:gpt-4.1-mini"}
     assert String.contains?(prompt, "[DENARIO_REFEREE_REVIEW]")
+  end
+
+  test "referee ignores stale in-memory paper paths when the canonical artifact exists", %{
+    project_dir: project_dir
+  } do
+    assert {:ok, denario} = DenarioEx.new(project_dir: project_dir, clear_project_dir: true)
+
+    assert {:ok, denario} =
+             DenarioEx.set_data_description(denario, "Urban sensor anomaly project.")
+
+    assert {:ok, denario} = DenarioEx.set_idea(denario, "Interpretable anomaly detection.")
+    assert {:ok, denario} = DenarioEx.set_method(denario, "Use blocked temporal splits.")
+
+    assert {:ok, denario} =
+             DenarioEx.set_results(denario, "The detector separates abnormal events.")
+
+    pdf_path = ArtifactRegistry.path(project_dir, :paper_pdf)
+    File.mkdir_p!(Path.dirname(pdf_path))
+    File.write!(pdf_path, "fake pdf bytes")
+
+    denario = %{
+      denario
+      | research: %{
+          denario.research
+          | paper_pdf_path: Path.join(project_dir, "paper/missing.pdf")
+        }
+    }
+
+    assert {:ok, _denario} =
+             DenarioEx.referee(
+               denario,
+               client: FakeClient,
+               llm: "openai:gpt-4.1-mini",
+               rasterizer: FakeRasterizer
+             )
+
+    assert_received {:rasterized_pdf, ^pdf_path, _output_dir}
   end
 end

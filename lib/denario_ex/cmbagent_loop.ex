@@ -107,7 +107,7 @@ defmodule DenarioEx.CMBAgentLoop do
       with {:ok, llm} <- fetch_agent_model(agent_models, agent),
            prompt <- WorkflowPrompts.cmbagent_step_prompt(task, agent, step, context, outputs),
            {:ok, step_text} <- AI.complete(client, prompt, llm, keys),
-           {:ok, output} <- Text.extract_block(step_text, "STEP_OUTPUT") do
+           {:ok, output} <- Text.extract_block_or_fallback(step_text, "STEP_OUTPUT") do
         step_output = %{
           id: Text.fetch(step, "id"),
           agent: agent,
@@ -123,13 +123,13 @@ defmodule DenarioEx.CMBAgentLoop do
   end
 
   defp extract_final_output("idea", text) do
-    with {:ok, block} <- Text.extract_block(text, "IDEA") do
+    with {:ok, block} <- Text.extract_block_or_fallback(text, "IDEA") do
       {:ok, Text.clean_section(block, "IDEA")}
     end
   end
 
   defp extract_final_output("method", text) do
-    with {:ok, block} <- Text.extract_block(text, "METHODS") do
+    with {:ok, block} <- Text.extract_block_or_fallback(text, "METHODS") do
       {:ok, Text.clean_section(block, "METHODS")}
     end
   end

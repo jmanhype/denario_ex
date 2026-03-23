@@ -68,11 +68,8 @@ Then open [http://localhost:4000](http://localhost:4000).
 
 Current workspace model:
 
-- `/` is the research workspace home: project status, workflow progress, next step, and trust state
-- `/artifacts` is the artifact workspace: edit saved brief, idea, method, results, literature, and referee files with provenance
-- `/runs` is the run workspace: launch settings, current activity, retry controls, and run history
-- `/outputs` is the output workspace: plots, TeX, PDF, and critique logs with provenance
-- `/review` is the review workspace: literature, referee notes, evidence gates, and human checkpoints
+- `/` is the single-page control room: project status, workflow progress, next step, artifact editing, outputs, settings, and run history all live on the dashboard
+- `/artifacts` is the file-serving endpoint the dashboard uses for TeX, PDF, plot, and referee-log downloads; it is not a separate workspace route
 
 The web layer uses a shared workspace-state adapter so each phase is rendered
 with the same status vocabulary: `missing`, `ready`, `running`, `blocked`,

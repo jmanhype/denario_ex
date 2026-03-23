@@ -50,7 +50,7 @@ defmodule DenarioEx do
           | {:iterations, pos_integer()}
           | {:client, module()}
 
-  @spec new([option()]) :: {:ok, t()}
+  @spec new([option()]) :: {:ok, t()} | {:error, term()}
   def new(opts \\ []) do
     project_dir =
       opts
@@ -59,24 +59,29 @@ defmodule DenarioEx do
 
     clear_project_dir? = Keyword.get(opts, :clear_project_dir, false)
 
-    if clear_project_dir? and File.exists?(project_dir) do
-      File.rm_rf!(project_dir)
+    try do
+      if clear_project_dir? and File.exists?(project_dir) do
+        File.rm_rf!(project_dir)
+      end
+
+      ArtifactRegistry.ensure_project_dirs(project_dir)
+
+      input_files_dir = ArtifactRegistry.input_files_dir(project_dir)
+      plots_dir = ArtifactRegistry.plots_dir(project_dir)
+
+      session = %__MODULE__{
+        project_dir: project_dir,
+        input_files_dir: input_files_dir,
+        plots_dir: plots_dir,
+        keys: Keyword.get(opts, :keys, KeyManager.from_env()),
+        research: Keyword.get(opts, :research, %Research{})
+      }
+
+      {:ok, load_existing_content(session)}
+    rescue
+      error in File.Error ->
+        {:error, {:invalid_project_dir, project_dir, error.reason}}
     end
-
-    ArtifactRegistry.ensure_project_dirs(project_dir)
-
-    input_files_dir = ArtifactRegistry.input_files_dir(project_dir)
-    plots_dir = ArtifactRegistry.plots_dir(project_dir)
-
-    session = %__MODULE__{
-      project_dir: project_dir,
-      input_files_dir: input_files_dir,
-      plots_dir: plots_dir,
-      keys: Keyword.get(opts, :keys, KeyManager.from_env()),
-      research: Keyword.get(opts, :research, %Research{})
-    }
-
-    {:ok, load_existing_content(session)}
   end
 
   @spec set_data_description(t(), String.t()) :: {:ok, t()}
@@ -106,18 +111,35 @@ defmodule DenarioEx do
 
   @spec set_plots(t(), [String.t()] | nil) :: {:ok, t()}
   def set_plots(%__MODULE__{} = session, plots \\ nil) do
+    sync_plots? = not is_nil(plots)
+
     plot_paths =
       case plots do
-        nil -> Path.wildcard(Path.join(session.plots_dir, "*.png"))
+        nil -> ArtifactRegistry.plot_paths(session.project_dir)
         values -> values
       end
 
     copied_paths =
       Enum.map(plot_paths, fn plot_path ->
-        destination = Path.join(session.plots_dir, Path.basename(plot_path))
-        File.cp!(plot_path, destination)
+        source = Path.expand(plot_path)
+        destination = Path.expand(Path.join(session.plots_dir, Path.basename(plot_path)))
+
+        if source != destination do
+          File.cp!(source, destination)
+        end
+
         destination
       end)
+      |> Enum.uniq()
+
+    if sync_plots? do
+      existing_paths = ArtifactRegistry.plot_paths(session.project_dir) |> MapSet.new()
+      desired_paths = MapSet.new(copied_paths)
+
+      existing_paths
+      |> MapSet.difference(desired_paths)
+      |> Enum.each(&File.rm/1)
+    end
 
     {:ok, %{session | research: %{session.research | plot_paths: copied_paths}}}
   end
@@ -289,7 +311,7 @@ defmodule DenarioEx do
              session.research.idea
            ),
          {:ok, raw_text} <- complete(client, prompt, llm, session.keys),
-         {:ok, methods} <- Text.extract_block(raw_text, "METHODS"),
+         {:ok, methods} <- Text.extract_block_or_fallback(raw_text, "METHODS"),
          cleaned <- Text.clean_section(methods, "METHODS"),
          {:ok, updated} <- set_method(session, cleaned) do
       Progress.emit(opts, %{
@@ -340,6 +362,8 @@ defmodule DenarioEx do
         with :ok <- ensure_present(session.research.data_description, :data_description),
              :ok <- ensure_present(session.research.idea, :idea),
              {:ok, result} <- LiteratureWorkflow.run(session, opts),
+             :ok <-
+               ArtifactRegistry.persist_literature_sources(session.project_dir, result.sources),
              {:ok, updated} <- set_literature(session, result.literature) do
           {:ok,
            %{
@@ -364,6 +388,7 @@ defmodule DenarioEx do
     with :ok <- ensure_present(session.research.data_description, :data_description),
          :ok <- ensure_present(session.research.idea, :idea),
          {:ok, result} <- FutureHouseWorkflow.run(session, opts),
+         :ok <- ArtifactRegistry.persist_literature_sources(session.project_dir, result.sources),
          {:ok, updated} <- set_literature(session, result.literature) do
       {:ok, %{updated | research: %{updated.research | literature_sources: result.sources}}}
     end
@@ -556,6 +581,6 @@ defmodule DenarioEx do
   end
 
   defp load_existing_content(%__MODULE__{} = session) do
-    %{session | research: ArtifactRegistry.load_research(session.project_dir, session.research)}
+    %{session | research: ArtifactRegistry.load_research(session.project_dir, %Research{})}
   end
 end

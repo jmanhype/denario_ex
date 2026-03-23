@@ -17,6 +17,7 @@ defmodule DenarioEx.PythonExecutor do
 
     File.mkdir_p!(work_dir)
     File.write!(script_path, code)
+    existing_generated_files = generated_file_signatures(work_dir)
 
     try do
       task =
@@ -37,7 +38,7 @@ defmodule DenarioEx.PythonExecutor do
              "status" => 0,
              "output" => output,
              "script_path" => script_path,
-             "generated_files" => collect_generated_files(work_dir)
+             "generated_files" => collect_generated_files(work_dir, existing_generated_files)
            }}
 
         {:ok, {output, status}} ->
@@ -125,12 +126,35 @@ defmodule DenarioEx.PythonExecutor do
     |> Enum.to_list()
   end
 
-  defp collect_generated_files(work_dir) do
+  defp collect_generated_files(work_dir, existing_generated_files) do
+    generated_file_signatures(work_dir)
+    |> Enum.filter(fn {path, signature} ->
+      Map.get(existing_generated_files, path) != signature
+    end)
+    |> Enum.map(fn {path, _signature} -> path end)
+  end
+
+  defp generated_file_signatures(work_dir) do
     extensions = ["png", "jpg", "jpeg", "pdf", "svg"]
 
     extensions
     |> Enum.flat_map(fn ext -> Path.wildcard(Path.join(work_dir, "**/*.#{ext}")) end)
-    |> Enum.uniq()
+    |> Enum.reduce(%{}, fn path, acc ->
+      case File.read(path) do
+        {:ok, contents} ->
+          Map.put(acc, path, generated_file_signature(contents))
+
+        {:error, _reason} ->
+          acc
+      end
+    end)
+  end
+
+  defp generated_file_signature(contents) do
+    {
+      byte_size(contents),
+      :crypto.hash(:sha256, contents)
+    }
   end
 
   defp execution_env do

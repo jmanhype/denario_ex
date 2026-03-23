@@ -48,8 +48,8 @@ defmodule DenarioEx.Text do
       "\\maketitle",
       "<PARAGRAPH>",
       "</PARAGRAPH>",
-      "</{section}>",
-      "<{section}>",
+      "</#{section}>",
+      "<#{section}>",
       "```latex",
       "```",
       "\\usepackage{amsmath}"
@@ -72,6 +72,20 @@ defmodule DenarioEx.Text do
 
   @spec fetch(map(), String.t()) :: term()
   def fetch(map, key) when is_map(map) and is_binary(key) do
-    Map.get(map, key) || Map.get(map, String.to_atom(key))
+    case Map.fetch(map, key) do
+      {:ok, value} ->
+        value
+
+      :error ->
+        Enum.find_value(map, fn
+          {map_key, value} when is_atom(map_key) ->
+            if Atom.to_string(map_key) == key, do: value, else: nil
+
+          _ ->
+            nil
+        end)
+    end
   end
+
+  def fetch(_map, _key), do: nil
 end

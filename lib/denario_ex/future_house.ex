@@ -3,7 +3,7 @@ defmodule DenarioEx.FutureHouse do
 
   @behaviour DenarioEx.FutureHouseClient
 
-  alias DenarioEx.{KeyManager, Progress}
+  alias DenarioEx.{KeyManager, Progress, Text}
 
   @default_base_url "https://api.platform.edisonscientific.com"
   @default_job_name "job-futurehouse-paperqa3-precedent"
@@ -137,7 +137,7 @@ defmodule DenarioEx.FutureHouse do
         {:error, {:futurehouse_fetch_failed, status, body}}
 
       {:error, error} ->
-        {:error, {:futurehouse_fetch_failed, error}}
+      {:error, {:futurehouse_fetch_failed, error}}
     end
   end
 
@@ -157,7 +157,5 @@ defmodule DenarioEx.FutureHouse do
   defp poll_progress("truncated"), do: 85
   defp poll_progress(_status), do: 50
 
-  defp fetch(map, key) when is_map(map) do
-    Map.get(map, key) || Map.get(map, String.to_atom(key))
-  end
+  defp fetch(map, key), do: Text.fetch(map, key)
 end

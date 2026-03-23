@@ -2,6 +2,7 @@ defmodule DenarioEx.CompatibilityTest do
   use ExUnit.Case, async: true
 
   alias DenarioEx
+  alias DenarioEx.ArtifactRegistry
 
   setup do
     project_dir =
@@ -51,6 +52,45 @@ defmodule DenarioEx.CompatibilityTest do
     assert denario.research.methodology == "Research method"
     assert denario.research.results == "Research results"
     assert Enum.any?(denario.research.plot_paths, &String.ends_with?(&1, "source_plot.png"))
+  end
+
+  test "set_all/1 clears stale in-memory artifacts when files were removed from disk", %{
+    project_dir: project_dir
+  } do
+    assert {:ok, denario} = DenarioEx.new(project_dir: project_dir, clear_project_dir: true)
+    assert {:ok, denario} = DenarioEx.set_data_description(denario, "Research description")
+    assert {:ok, denario} = DenarioEx.set_idea(denario, "Research idea")
+
+    assert :ok =
+             ArtifactRegistry.persist_keywords(
+               project_dir,
+               ["PHYSICS", "Acoustics"],
+               kw_type: :unesco
+             )
+
+    tex_path = ArtifactRegistry.path(project_dir, :paper_tex)
+    pdf_path = ArtifactRegistry.path(project_dir, :paper_pdf)
+    File.mkdir_p!(Path.dirname(tex_path))
+    File.write!(tex_path, "paper tex")
+    File.write!(pdf_path, "paper pdf")
+
+    assert {:ok, denario} = DenarioEx.set_all(denario)
+    assert denario.research.keywords == ["PHYSICS", "Acoustics"]
+    assert denario.research.paper_tex_path == tex_path
+    assert denario.research.paper_pdf_path == pdf_path
+
+    File.rm!(ArtifactRegistry.path(project_dir, :data_description))
+    File.rm!(ArtifactRegistry.path(project_dir, :keywords))
+    File.rm!(tex_path)
+    File.rm!(pdf_path)
+
+    assert {:ok, denario} = DenarioEx.set_all(denario)
+
+    assert denario.research.data_description == ""
+    assert denario.research.idea == "Research idea"
+    assert denario.research.keywords == %{}
+    assert denario.research.paper_tex_path == nil
+    assert denario.research.paper_pdf_path == nil
   end
 
   test "show_keywords/1 formats both map and list keyword shapes", %{project_dir: project_dir} do
