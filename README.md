@@ -3,24 +3,62 @@
 [![CI](https://github.com/jmanhype/denario_ex/actions/workflows/ci.yml/badge.svg)](https://github.com/jmanhype/denario_ex/actions/workflows/ci.yml)
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 
-DenarioEx is a standalone Elixir implementation of the Denario research workflow:
-idea generation, method drafting, results execution, literature checking, and
-paper generation.
+Elixir port of the Denario research workflow. Takes a data description, generates a research idea, drafts methods, executes code to produce results, checks literature, and generates a LaTeX paper.
 
-It is built around `ReqLLM` and `LLMDB`, keeps project artifacts on disk, and
-can run either as a real OpenAI-backed workflow or as a fully offline demo.
-It now also includes a separate Phoenix LiveView shell under `web/` for a
-browser-based research workspace on top of the same core library.
+**Status:** v0.2.1. Core research pipeline works end-to-end with OpenAI. 90-95% parity with the Python Denario codebase (see [PARITY.md](PARITY.md) for the full mapping). The Phoenix LiveView web UI is functional but early.
 
-## What It Covers
+## Project structure
 
-- project/session lifecycle with persisted `input_files/`
-- fast and `cmbagent`-style idea and method generation
-- `get_results/2` with planning, code generation, execution, retries, and plot harvesting
-- literature checking via Semantic Scholar with OpenAlex fallback
-- LaTeX paper generation with optional bibliography and PDF compilation
+The repo has 2 OTP applications:
 
-## Quickstart
+```
+lib/denario_ex/          Core library (31 modules)
+web/                     Phoenix LiveView research workspace (separate app)
+test/                    16 test files for the core library
+examples/                Offline demo script
+priv/keywords/           UNESCO, AAS, AAAI keyword taxonomies
+priv/latex/              Journal style files (AASTeX, ICML, NeurIPS, JHEP, PASJ)
+```
+
+### Core modules (lib/denario_ex/)
+
+| Module | Purpose |
+|---|---|
+| `research.ex` | Main orchestrator: `new/1`, `set_data_description/2`, `get_idea/2`, `get_method/2`, `get_results/2`, `check_idea/2`, `get_paper/2` |
+| `cmbagent_loop.ex` | Multi-agent planning loop (Elixir-native, not Python cmbagent) |
+| `results_workflow.ex` | Code planning, generation, execution, retry, plot harvesting |
+| `literature_workflow.ex` | Semantic Scholar search with OpenAlex fallback |
+| `paper_workflow.ex` | LaTeX generation with journal presets and optional PDF compilation |
+| `review_workflow.ex` | Referee pass with PDF rasterization fallback |
+| `keyword_workflow.ex` | Keyword extraction (UNESCO, AAS, AAAI taxonomies) |
+| `description_enhancement_workflow.ex` | LLM-based data description rewriting |
+| `future_house.ex`, `future_house_client.ex` | FutureHouse/Edison API integration |
+| `semantic_scholar.ex`, `semantic_scholar_client.ex` | Semantic Scholar API |
+| `open_alex.ex` | OpenAlex fallback for literature search |
+| `code_executor.ex`, `python_executor.ex` | Sandboxed Python code execution |
+| `pdf_rasterizer.ex`, `system_pdf_rasterizer.ex` | PDF-to-image for referee review |
+| `llm.ex`, `llm_client.ex`, `req_llm_client.ex` | LLM abstraction over ReqLLM |
+| `key_manager.ex` | API key rotation and management |
+| `artifact_registry.ex` | On-disk artifact tracking |
+| `cli.ex` | Escript entrypoint |
+| `offline_demo.ex` | Deterministic demo with fake clients |
+| `prompt_templates.ex`, `workflow_prompts.ex` | LLM prompt text |
+| `ai.ex`, `text.ex`, `progress.ex` | Utilities |
+
+### Web UI (web/)
+
+Phoenix LiveView app. Single-page dashboard at `/` showing project status, workflow progress, artifact editing, and run history. `/artifacts` serves generated files (TeX, PDF, plots).
+
+6 phase states: `missing`, `ready`, `running`, `blocked`, `review_needed`, `done`.
+
+## Dependencies
+
+- Elixir 1.18+
+- `req` ~> 0.5.17 (HTTP client)
+- `llm_db` ~> 2026.3 (model metadata)
+- `req_llm` (pinned to a Git commit -- see note below)
+
+## Quick start
 
 ```bash
 mix deps.get
@@ -28,17 +66,24 @@ mix test
 mix escript.build
 ```
 
-## CLI
-
-The standalone repo now ships with an escript entrypoint:
+### Offline demo (no API keys needed)
 
 ```bash
+mix run examples/offline_demo.exs
+```
+
+Runs a deterministic workflow with fake LLM and literature clients. Writes a complete project directory with idea, methods, results, literature review, a plot, and a LaTeX paper.
+
+```bash
+# Or via the CLI:
 ./denario_ex offline-demo --project-dir /tmp/denario_ex_demo
 ```
 
-For a real run:
+### Real workflow
 
 ```bash
+export OPENAI_API_KEY=...
+
 ./denario_ex research-pilot \
   --project-dir /tmp/denario_ex_full \
   --data-description-file ./project_input.md \
@@ -47,180 +92,78 @@ For a real run:
   --literature
 ```
 
-`research-pilot` is the one-call compatibility workflow. It loads the data
-description, runs idea generation, method generation, results, optional
-literature checking, and paper generation in sequence.
+`research-pilot` runs the full sequence: idea generation, method generation, results execution, optional literature check, paper generation.
 
-## Web UI
-
-The repo now includes a Phoenix LiveView app in `web/` that sits on top of the
-core `denario_ex` library. It is intentionally a separate app, not a rewrite of
-the core.
-
-```bash
-cd web
-mix deps.get
-mix test
-mix phx.server
-```
-
-Then open [http://localhost:4000](http://localhost:4000).
-
-Current workspace model:
-
-- `/` is the single-page control room: project status, workflow progress, next step, artifact editing, outputs, settings, and run history all live on the dashboard
-- `/artifacts` is the file-serving endpoint the dashboard uses for TeX, PDF, plot, and referee-log downloads; it is not a separate workspace route
-
-The web layer uses a shared workspace-state adapter so each phase is rendered
-with the same status vocabulary: `missing`, `ready`, `running`, `blocked`,
-`review_needed`, and `done`.
-
-Trust model:
-
-- generated artifacts are drafts, not final claims
-- paper and referee flows surface evidence gates in plain language
-- provider and configuration problems are shown as launch blockers with explicit recovery guidance
-
-Architecture notes live in [docs/architecture/liveview-ui.md](docs/architecture/liveview-ui.md).
-
-If you are not running inside an activated virtualenv, point the results
-executor at a known-good interpreter:
-
-```bash
-DENARIO_EX_PYTHON=/path/to/venv/bin/python ./denario_ex research-pilot ...
-```
-
-## Offline Demo
-
-The fastest way to see the full workflow without API keys or network access is:
-
-```bash
-mix run examples/offline_demo.exs
-```
-
-That script runs a deterministic end-to-end flow with fake LLM, execution, and
-literature clients, then writes a complete demo project directory containing:
-
-- `input_files/data_description.md`
-- `input_files/idea.md`
-- `input_files/methods.md`
-- `input_files/results.md`
-- `input_files/literature.md`
-- `input_files/plots/anomaly_scores.png`
-- `paper/paper_v4_final.tex`
-
-To control the output directory:
-
-```bash
-DENARIO_EX_DEMO_DIR=/tmp/denario_ex_demo mix run examples/offline_demo.exs
-```
-
-Or through the CLI:
-
-```bash
-./denario_ex offline-demo --project-dir /tmp/denario_ex_demo
-```
-
-## Real OpenAI Workflow
-
-For a real run, export your OpenAI key and use the library directly:
-
-```bash
-export OPENAI_API_KEY=...
-iex -S mix
-```
+### Programmatic usage
 
 ```elixir
-alias DenarioEx
-
-{:ok, denario} =
-  DenarioEx.new(project_dir: "/tmp/denario_ex_full", clear_project_dir: true)
-
-{:ok, denario} =
-  DenarioEx.set_data_description(
-    denario,
-    "Generate a tiny synthetic anomaly-score dataset, summarize it, and write a short paper."
-  )
-
-{:ok, denario} =
-  DenarioEx.get_idea(
-    denario,
-    mode: :cmbagent,
-    planner_model: "openai:gpt-4.1-mini"
-  )
-
-{:ok, denario} =
-  DenarioEx.get_method(
-    denario,
-    mode: :cmbagent,
-    planner_model: "openai:gpt-4.1-mini"
-  )
-
-{:ok, denario} =
-  DenarioEx.get_results(
-    denario,
-    planner_model: "openai:gpt-4.1-mini",
-    engineer_model: "openai:gpt-4.1-mini"
-  )
-
-{:ok, denario} = DenarioEx.check_idea(denario, llm: "openai:gpt-4.1-mini")
-{:ok, denario} = DenarioEx.get_paper(denario, llm: "openai:gpt-4.1-mini", compile: false)
+{:ok, d} = DenarioEx.new(project_dir: "/tmp/demo", clear_project_dir: true)
+{:ok, d} = DenarioEx.set_data_description(d, "Generate a synthetic dataset and write a paper.")
+{:ok, d} = DenarioEx.get_idea(d, mode: :cmbagent, planner_model: "openai:gpt-4.1-mini")
+{:ok, d} = DenarioEx.get_method(d, mode: :cmbagent, planner_model: "openai:gpt-4.1-mini")
+{:ok, d} = DenarioEx.get_results(d, planner_model: "openai:gpt-4.1-mini", engineer_model: "openai:gpt-4.1-mini")
+{:ok, d} = DenarioEx.check_idea(d, llm: "openai:gpt-4.1-mini")
+{:ok, d} = DenarioEx.get_paper(d, llm: "openai:gpt-4.1-mini", compile: false)
 ```
 
-## Credentials
+### Web UI
 
-DenarioEx reads these environment variables:
+```bash
+cd web && mix deps.get && mix phx.server
+```
 
-- OpenAI: `OPENAI_API_KEY`
-- Gemini: `GOOGLE_API_KEY` or `GEMINI_API_KEY`
-- Anthropic: `ANTHROPIC_API_KEY`
-- Perplexity: `PERPLEXITY_API_KEY`
-- Semantic Scholar: `SEMANTIC_SCHOLAR_KEY`, `SEMANTIC_SCHOLAR_API_KEY`, or `S2_API_KEY`
-- FutureHouse/Edison: `FUTURE_HOUSE_API_KEY`
+Open http://localhost:4000.
 
-`check_idea/2` uses Semantic Scholar first and falls back to OpenAlex when no
-Semantic Scholar key is present or the public endpoint is rate-limited.
+## API credentials
+
+| Variable | Service |
+|---|---|
+| `OPENAI_API_KEY` | OpenAI |
+| `GOOGLE_API_KEY` or `GEMINI_API_KEY` | Gemini |
+| `ANTHROPIC_API_KEY` | Anthropic |
+| `PERPLEXITY_API_KEY` | Perplexity |
+| `SEMANTIC_SCHOLAR_KEY` or `S2_API_KEY` | Semantic Scholar |
+| `FUTURE_HOUSE_API_KEY` | FutureHouse/Edison |
+
+Literature search uses Semantic Scholar first, falls back to OpenAlex when no key is present or the public endpoint is rate-limited.
+
+For Python code execution, set `DENARIO_EX_PYTHON` to a virtualenv interpreter path if needed.
+
+## Temporary req_llm pin
+
+`req_llm` is pinned to a Git commit (`jmanhype/req_llm@ee00b45`) instead of the Hex release. This works around a `max_tokens` vs `max_completion_tokens` naming issue in `req_llm` 1.7.1 with OpenAI reasoning models. See [upstream PR #506](https://github.com/agentjido/req_llm/pull/506). Replace with the Hex version once that fix ships.
+
+## Design decisions
+
+**Elixir-native planning loop, not Python cmbagent.** The `cmbagent_loop.ex` module reimplements the multi-agent planning pattern in Elixir rather than calling out to the Python cmbagent library. This removes the Python runtime dependency for the core workflow.
+
+**ReqLLM over raw HTTP.** Using `req_llm` as the LLM client layer means model routing, streaming, and provider differences are handled by the library rather than custom code. The tradeoff is the temporary Git pin mentioned above.
+
+**Separate web app.** The Phoenix LiveView UI is a separate OTP application under `web/` rather than being mixed into the core library. This keeps the escript and library usable without Phoenix as a dependency.
+
+**PDF rasterization for referee review.** The referee workflow converts generated PDFs to images for LLM review rather than parsing LaTeX directly. Falls back to raw LaTeX text when no PDF renderer is available.
+
+## Known limitations
+
+- The Python code executor runs generated code in a subprocess. There is no sandboxing beyond the OS process boundary.
+- Literature search depends on Semantic Scholar's public API, which has aggressive rate limits without an API key.
+- PDF compilation requires a LaTeX distribution (texlive/mactex) installed on the host.
+- The web UI is a single LiveView page. There is no multi-user support or authentication.
+- Parity with the Python Denario is approximately 90-95%. See [PARITY.md](PARITY.md) for the specific function-by-function mapping.
 
 ## Releases
-
-GitHub releases are cut from tags:
 
 ```bash
 git tag v0.2.1
 git push origin v0.2.1
 ```
 
-The release workflow runs the test suite and publishes a GitHub release with
-generated notes.
+The release workflow runs tests and publishes a GitHub release.
 
-## Parity Status
+## Source lineage
 
-The current parity audit lives in [PARITY.md](PARITY.md).
+Extracted from the Elixir port in `AstroPilot-AI/Denario`. Now maintained independently.
 
-Short version:
+## License
 
-- core research workflow: effectively ported
-- compatibility surface: mostly ported, with a few Python-only branches still missing
-- Phoenix LiveView research workspace: initial multi-page slice shipped in `web/`
-- Python Streamlit app: not ported literally
-
-## Temporary `req_llm` Pin
-
-This repo is temporarily pinned to a Git commit of `req_llm` instead of the
-latest Hex release.
-
-- Current pin: `jmanhype/req_llm@ee00b4553cd6823b48c1045b825565855a77a93b`
-- Upstream fix: <https://github.com/agentjido/req_llm/pull/506>
-
-This exists because `req_llm` `1.7.1` still injects `:max_tokens` for some
-OpenAI reasoning/object calls, which causes noisy
-`Renamed :max_tokens to :max_completion_tokens` warnings.
-
-Once that fix lands in Hex, replace the Git dependency in `mix.exs` with the
-published version and refresh `mix.lock`.
-
-## Source Lineage
-
-This repository started as an extraction from the Elixir port previously
-developed in `AstroPilot-AI/Denario`, and now continues independently as the
-standalone `denario_ex` project.
+GPL-3.0
